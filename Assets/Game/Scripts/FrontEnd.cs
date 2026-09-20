@@ -726,6 +726,9 @@ public class FrontEnd : MonoBehaviour
             // Give the player a lit lantern + oil so they can see in the dark.
             DeceitLoader.EquipStartingLantern();
 
+            // Place authored fountains (from the map editor sidecar) into the world.
+            DeceitLoader.PlaceFountains();
+
             // Spawn the runtime mini-map overlay (bottom-left of screen).
             DeceitMinimap.Ensure();
         }
