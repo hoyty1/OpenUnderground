@@ -60,6 +60,8 @@ body {
 }
 .swatch-fountain { background: radial-gradient(circle at 50% 45%, #6fd3ff 0 30%, #2f6f8f 55%, #123 100%); position: relative; }
 .swatch-fountain::after { content: '\26F2'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+.swatch-spawn { background: radial-gradient(circle at 50% 45%, #7CFC00 0 28%, #2e7d16 60%, #0a1a04 100%); position: relative; }
+.swatch-spawn::after { content: '\2605'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #eaffd0; }
 .swatch-wrap { background: #1a1a1a; border: 2px dashed #b455ff; }
 .swatch-erase { background: repeating-linear-gradient(45deg, #333 0 6px, #222 6px 12px); }
 
@@ -104,6 +106,8 @@ body {
 .cell-border { box-shadow: inset 0 0 0 3px #b455ff; }
 .border-tag { position: absolute; top: 2px; left: 2px; background: #b455ff; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 3px; font-weight: 700; }
 .fountain-mark { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 30px; text-shadow: 0 0 4px #000; }
+.cell-spawn { box-shadow: inset 0 0 0 3px #7CFC00; }
+.spawn-mark { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #7CFC00; font-size: 30px; text-shadow: 0 0 4px #000, 0 0 2px #000; pointer-events: none; }
 
 .status { padding: 8px 14px; font-size: 12px; color: #9a9a9a; background: #181818; border-top: 1px solid #2c2c2c; }
 

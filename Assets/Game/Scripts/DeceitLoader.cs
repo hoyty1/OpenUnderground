@@ -38,6 +38,7 @@ public static class DeceitLoader
     {
         public int index, width, height;
         public int[] cells;               // row-major, length width*height; 0=empty,1=floor,2=wall
+        public DeceitPoint spawn;          // player start cell for this level (may be null)
         public DeceitPoint[] fountains;    // cell coordinates
         public DeceitBorder[] wrapBorders; // seamless-wrap link markers (used in a later step)
     }
@@ -75,7 +76,7 @@ public static class DeceitLoader
     }
 
     /// <summary>Returns the sidecar level whose index matches deceitIndex (0-based), or null.</summary>
-    private static DeceitLevel GetSidecarLevel(int deceitIndex)
+    public static DeceitLevel GetSidecarLevel(int deceitIndex)
     {
         DeceitMap map = LoadMap();
         if (map == null || map.levels == null) return null;
@@ -205,7 +206,18 @@ public static class DeceitLoader
             }
         }
 
-        ChooseSpawnCell(sc.cells, cw, ch);
+        // Prefer the spawn point painted in the map editor; fall back to a chosen floor cell.
+        if (sc.spawn != null && sc.spawn.x >= 0 && sc.spawn.x < cw && sc.spawn.y >= 0 && sc.spawn.y < ch
+            && sc.cells[sc.spawn.y * cw + sc.spawn.x] == 1)
+        {
+            SpawnCellX = sc.spawn.x * TilesPerCell + TilesPerCell / 2;
+            SpawnCellY = sc.spawn.y * TilesPerCell + TilesPerCell / 2;
+            Debug.Log($"[DeceitLoader] Level {uwLevel} spawn set from editor paint at cell ({sc.spawn.x},{sc.spawn.y}).");
+        }
+        else
+        {
+            ChooseSpawnCell(sc.cells, cw, ch);
+        }
 
         Debug.Log($"[DeceitLoader] Built level {uwLevel} from sidecar ({cw}×{ch} cells → {gw}×{gh} tiles).");
     }

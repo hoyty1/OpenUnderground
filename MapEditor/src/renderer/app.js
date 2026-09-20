@@ -41,7 +41,7 @@ const LEVEL_1_DEFAULT = [
 // ---- State -----------------------------------------------------------------
 function blankLevel(w = DEFAULT_W, h = DEFAULT_H) {
   w = clampDim(w); h = clampDim(h);
-  return { width: w, height: h, cells: new Array(w * h).fill(CELL.EMPTY), fountains: [], wrapBorders: [], nextBorderId: 1 };
+  return { width: w, height: h, cells: new Array(w * h).fill(CELL.EMPTY), fountains: [], spawn: null, wrapBorders: [], nextBorderId: 1 };
 }
 
 function defaultLevels() {
@@ -69,12 +69,13 @@ const TOOLS = [
   { id: 'floor',    label: 'Floor',        hint: 'Walkable 11x11 gold/black checkerboard cell (no walls). Hold and drag to paint.' },
   { id: 'wall',     label: 'Wall',         hint: 'Solid grey-brick wall cell. Hold and drag to trace non-square rooms.' },
   { id: 'fountain', label: 'Fountain',     hint: 'Click a cell to place/remove a fountain (original Underworld fountain). Sits on floor.' },
+  { id: 'spawn',    label: 'Spawn Point',  hint: 'Click a floor cell to set where the player starts a new game on this level. Only one per level — clicking a new cell moves it; clicking it again removes it. Sits on floor.' },
   { id: 'wrap',     label: 'Wrap Border',  hint: 'Click an edge cell to mark a seamless wrap border. Set a per-direction exit (N/E/S/W) on the right; the corridor loops through that edge continuously. At least one direction is required.' },
   { id: 'erase',    label: 'Erase',        hint: 'Hold and drag to clear cells back to empty (floor/wall/fountain/border).' }
 ];
 
 // point tools act on the initial press only (no drag-toggling)
-const POINT_TOOLS = { fountain: true, wrap: true };
+const POINT_TOOLS = { fountain: true, spawn: true, wrap: true };
 
 // ---- Helpers ---------------------------------------------------------------
 function curLevel() { return state.levels[state.level]; }
@@ -104,7 +105,9 @@ function resizeLevel(lv, nw, nh) {
     if (p.x < nw && p.y < nh) { b.index = p.y * nw + p.x; nb.push(b); }
     else removed.push(b.id);
   });
-  lv.width = nw; lv.height = nh; lv.cells = nc; lv.fountains = nf; lv.wrapBorders = nb;
+  let ns = null;
+  if (lv.spawn != null) { const p = xy(lv, lv.spawn); if (p.x < nw && p.y < nh) ns = p.y * nw + p.x; }
+  lv.width = nw; lv.height = nh; lv.cells = nc; lv.fountains = nf; lv.spawn = ns; lv.wrapBorders = nb;
   removed.forEach(id => unlinkReferences(lv, id));
 }
 
@@ -121,6 +124,7 @@ function applyTool(idx) {
     case 'wall':
       lv.cells[idx] = CELL.WALL;
       { const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1); } // wall can't hold a fountain
+      if (lv.spawn === idx) { lv.spawn = null; structural = true; }           // wall can't hold a spawn
       break;
     case 'fountain': {
       const f = fountainAt(lv, idx);
@@ -129,6 +133,15 @@ function applyTool(idx) {
         if (lv.cells[idx] !== CELL.FLOOR) lv.cells[idx] = CELL.FLOOR; // fountains stand on floor
         lv.fountains.push(idx);
       }
+      break;
+    }
+    case 'spawn': {
+      if (lv.spawn === idx) { lv.spawn = null; }              // toggle off
+      else {
+        if (lv.cells[idx] !== CELL.FLOOR) lv.cells[idx] = CELL.FLOOR; // spawn stands on floor
+        lv.spawn = idx;
+      }
+      structural = true;                                     // redraw old + new spawn cell + legend
       break;
     }
     case 'wrap': {
@@ -145,6 +158,7 @@ function applyTool(idx) {
     case 'erase': {
       lv.cells[idx] = CELL.EMPTY;
       const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1);
+      if (lv.spawn === idx) { lv.spawn = null; structural = true; }
       const b = borderAt(lv, idx);
       if (b) {
         unlinkReferences(lv, b.id);
@@ -188,6 +202,7 @@ function buildLevelsFromSidecar(json) {
       const lv = blankLevel(w, h);
       for (let k = 0; k < Math.min(jl.cells.length, w * h); k++) lv.cells[k] = jl.cells[k];
       (jl.fountains || []).forEach(f => lv.fountains.push(f.y * w + f.x));
+      if (jl.spawn && Number.isFinite(jl.spawn.x) && Number.isFinite(jl.spawn.y) && jl.spawn.x < w && jl.spawn.y < h) lv.spawn = jl.spawn.y * w + jl.spawn.x;
       let maxId = 0;
       (jl.wrapBorders || []).forEach(b => {
         let exits;
@@ -276,14 +291,19 @@ function buildSidecar() {
   return {
     version: 2,
     tilesPerCell: TILES_PER_CELL,
-    levels: state.levels.map((lv, index) => ({
-      index,
-      width: lv.width,
-      height: lv.height,
-      cells: lv.cells.slice(),                 // 0=empty 1=floor 2=wall (row-major)
-      fountains: lv.fountains.map(i => xy(lv, i)),
-      wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(lv, b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } }))
-    }))
+    levels: state.levels.map((lv, index) => {
+      const out = {
+        index,
+        width: lv.width,
+        height: lv.height,
+        cells: lv.cells.slice(),               // 0=empty 1=floor 2=wall (row-major)
+        fountains: lv.fountains.map(i => xy(lv, i)),
+        wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(lv, b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } }))
+      };
+      // Only emit spawn when one is painted; the engine treats an absent key as "no spawn".
+      if (lv.spawn != null) out.spawn = xy(lv, lv.spawn);
+      return out;
+    })
   };
 }
 
@@ -346,6 +366,7 @@ function cellClass(lv, idx) {
   if (t === CELL.FLOOR) cls.push('cell-floor');
   else if (t === CELL.WALL) cls.push('cell-wall');
   else cls.push('cell-empty');
+  if (lv.spawn === idx) cls.push('cell-spawn');
   if (borderAt(lv, idx)) cls.push('cell-border');
   if (state.selected === idx) cls.push('selected');
   return cls.join(' ');
@@ -368,6 +389,11 @@ function fillCell(node, lv, idx) {
     const fm = el('div', 'fountain-mark', '\u26F2');
     fm.style.fontSize = Math.max(10, Math.round(cellPx * 0.5)) + 'px';
     node.appendChild(fm);
+  }
+  if (lv.spawn === idx) {
+    const sm = el('div', 'spawn-mark', '\u2605');
+    sm.style.fontSize = Math.max(10, Math.round(cellPx * 0.5)) + 'px';
+    node.appendChild(sm);
   }
 }
 
@@ -509,7 +535,7 @@ function render() {
   inspector.appendChild(el('h2', null, 'Legend'));
   const legend = el('div', 'legend');
   [['swatch-floor', 'Floor (checkerboard)'], ['swatch-wall', 'Wall (grey brick)'],
-   ['swatch-fountain', 'Fountain'], ['swatch-wrap', 'Wrap border']].forEach(([sw, name]) => {
+   ['swatch-fountain', 'Fountain'], ['swatch-spawn', 'Spawn point'], ['swatch-wrap', 'Wrap border']].forEach(([sw, name]) => {
     const r = el('div', 'legend-row');
     r.appendChild(el('div', 'tool-swatch ' + sw));
     r.appendChild(el('div', null, name));
