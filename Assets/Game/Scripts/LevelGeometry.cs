@@ -176,6 +176,10 @@ public class LevelGeometry : LevelObject
         MeshCollider meshCollider = go.AddComponent<MeshCollider>();
 
         Mesh mesh = meshFilter.mesh = new Mesh();
+        // Arbitrary-size Deceit levels (e.g. 121×121 tiles) exceed the 65,535-vertex
+        // limit of a 16-bit index buffer; without this, floor quads past that index wrap
+        // to garbage vertices and vanish, leaving chasms the player falls through.
+        mesh.indexFormat = IndexFormat.UInt32;
 
         mesh.subMeshCount = 48 + 10; // unique wall + floor materials
 
@@ -593,6 +597,7 @@ public class LevelGeometry : LevelObject
             floorWallsTris.AddRange(tris[c]);
         }
         Mesh meshFloorWalls = new Mesh();
+        meshFloorWalls.indexFormat = IndexFormat.UInt32; // collider must match the 32-bit render mesh or holes appear
         meshFloorWalls.vertices = vertices;
         meshFloorWalls.SetTriangles(floorWallsTris, 0);
         meshFloorWalls.RecalculateBounds();
@@ -612,6 +617,7 @@ public class LevelGeometry : LevelObject
             MeshFilter ceilingMeshFilter = ceilingGo.AddComponent<MeshFilter>();
             MeshRenderer ceilingMeshRenderer = ceilingGo.AddComponent<MeshRenderer>();
             Mesh meshCeiling = new Mesh();
+            meshCeiling.indexFormat = IndexFormat.UInt32;
             meshCeiling.vertices = vertices;
             meshCeiling.uv = uvArray;
             meshCeiling.SetTriangles(ceilingOnlyTris, 0);
