@@ -1,7 +1,7 @@
 {
   "name": "deceit-map-editor",
-  "version": "1.0.0",
-  "description": "Ultima IV Deceit dungeon map editor for OpenUnderground",
+  "version": "1.1.0",
+  "description": "Ultima IV Deceit dungeon map editor for OpenUnderground (offline vanilla-JS build with tool palette)",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -20,10 +20,7 @@
     "electron-builder": "^24.9.1",
     "electron-packager": "^17.1.2"
   },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
+  "dependencies": {},
   "build": {
     "appId": "com.openunderground.deceitmapeditor",
     "productName": "Deceit Map Editor",

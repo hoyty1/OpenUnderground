@@ -1,89 +1,81 @@
 # Deceit Map Editor
 
-Visual editor for Ultima IV Deceit dungeon levels (`DECEIT.DNG` format) for use with the OpenUnderground Unity engine.
+Visual map editor for OpenUnderground's Dungeon Deceit. Paint walkable dungeons with a
+tool palette, load the original `DECEIT.DNG` as a starting point, and save a map the Unity
+engine can read.
 
-## Features
-
-- **8×8 Grid Editor** for all 9 dungeon levels
-- **Cell Types**: Wall, Passage, Door, Ladder Up/Down, Special Room
-- **Connectivity Analysis**: BFS flood-fill shows disconnected regions
-- **Wrap-Around Toggle**: View map as torus topology (U4 dungeon standard)
-- **Spawn Tracking**: Highlights the player spawn cell (4,4) and its region
-- **Binary I/O**: Import/export DECEIT.DNG files (preserves metadata beyond first 64 bytes)
-- **Keyboard Shortcuts**: W/P/D/U/L/S for instant cell type assignment, arrows for navigation
+Built as a standalone Windows app (Electron). Plain vanilla JS with **no CDN and no build
+step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-Download the pre-built Windows executable:
-- `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.0.0.zip`
-- Extract the ZIP
-- Run `Deceit Map Editor.exe`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.1.0.zip`
+2. Extract the ZIP
+3. Run `Deceit Map Editor.exe`
 
-## Development Setup
+Level 1 of the original Deceit dungeon is pre-loaded on launch, so you see a real map
+immediately.
+
+## Palette (left side)
+
+| Tool | What it does |
+|------|--------------|
+| **Floor** | Paints a walkable cell rendered in-game as an 11×11 gold/black checkerboard (no walls). |
+| **Wall** | Paints a solid grey-brick wall cell. Click cell-by-cell to trace rooms that aren't square. |
+| **Fountain** | Places the original Underworld fountain on a cell (auto-sets floor underneath). Click again to remove. |
+| **Wrap Border** | Marks a wrap-around border cell. Each border gets an id (W1, W2, …); set its **Exit** in the right panel to the border the player arrives at when crossing. |
+| **Erase** | Clears a cell back to empty. |
+
+Click a cell to paint; click-drag to paint many. Switch levels with the tabs across the top.
+
+## Loading & saving
+
+- **Load DECEIT.DNG** — imports all 9 levels as a starting point (open cells → Floor,
+  solid cells → Wall). If a `DECEIT.map.json` sits next to the `.DNG`, its fountains and
+  wrap borders are merged back in.
+- **Save Map** — writes **two** files to the folder you choose:
+  - `DECEIT.DNG` — floor/wall geometry the engine already reads (checkerboard floors +
+    grey-brick walls). Copy this into `Assets/StreamingAssets/` to play it.
+  - `DECEIT.map.json` — sidecar with fountains and wrap-border exits (consumed by the
+    engine's Deceit loader).
+
+## Map sidecar format (`DECEIT.map.json`)
+
+```json
+{
+  "version": 1,
+  "grid": 8,
+  "tilesPerCell": 11,
+  "levels": [
+    {
+      "index": 0,
+      "width": 8,
+      "height": 8,
+      "cells": [0,1,2, ...],                        // 0=empty 1=floor 2=wall, row-major
+      "fountains": [ { "x": 4, "y": 4 } ],
+      "wrapBorders": [
+        { "id": 1, "x": 0, "y": 3, "exit": 2 },     // player crossing W1 arrives at W2
+        { "id": 2, "x": 7, "y": 3, "exit": 1 }
+      ]
+    }
+  ]
+}
+```
+
+`width`/`height` are stored per level so the format can grow beyond 8×8 later.
+
+## Run from source
 
 ```bash
 cd MapEditor
 npm install
-```
-
-## Running from Source
-
-```bash
 npm start
 ```
 
-## Building Standalone Executable
+## Notes
 
-**Note:** Building Windows executables from Linux requires Wine, which may not be available in all environments.
-
-The repository includes a pre-built Windows portable package in `dist/DeceitMapEditor-Windows-x64-v1.0.0.zip`.
-
-To build from source on Windows:
-```bash
-npm run build
-```
-
-Output will be in `MapEditor/dist/`.
-
-## Usage
-
-### Editing Cells
-- **Left-click**: Cycle through cell types (Wall → Passage → Door → Ladder Up → Ladder Down → Special → Wall)
-- **Right-click**: Set to Wall immediately
-- **Keyboard**: Select a cell, then press W/P/D/U/L/S to set type directly
-- **Arrow keys**: Navigate selected cell
-
-### View Options
-- **Show Regions**: Toggle connectivity overlay (each disconnected region gets a color)
-- **Wrap Around**: Toggle torus topology for connectivity analysis (default: ON, matching U4 behavior)
-
-### File Operations
-- **Open DECEIT.DNG**: Load existing dungeon file (all 9 levels)
-- **Export DECEIT.DNG**: Save edited map (preserves original metadata if file was loaded)
-
-## File Format
-
-`DECEIT.DNG` contains 9 levels, each 512 bytes:
-- First 64 bytes: 8×8 cell grid (row-major, high nibble = type)
-- Remaining 448 bytes: metadata (preserved on export if file was loaded)
-
-### Cell Type Values (High Nibble)
-- `0x0` = Wall/Solid
-- `0x1` = Ladder Up
-- `0x2` = Ladder Down
-- `0x3-0xB` = Passage variants
-- `0xC` = Door
-- `0xD` = Special Room
-- `0xE-0xF` = Passage
-
-## Default Data
-
-Level 1 is pre-loaded with the original Ultima IV Deceit dungeon layout for immediate use.
-
-## Integration with OpenUnderground
-
-Place the exported `DECEIT.DNG` in `Assets/StreamingAssets/` and enable Deceit mode in the engine (`LevelLoader.deceitMode = true`).
-
-## License
-
-MIT
+- Floor and wall painting is playable immediately through the existing `DECEIT.DNG`
+  pipeline. Fountains and per-border wrap exits require the engine-side loader to read
+  `DECEIT.map.json` (in progress).
+- The Windows `.exe` is packaged manually (Wine-based electron-builder is unavailable in
+  the build environment); only the `.zip` is tracked in git, not the unpacked folder.
