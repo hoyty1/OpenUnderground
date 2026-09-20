@@ -41,7 +41,7 @@ const LEVEL_1_DEFAULT = [
 // ---- State -----------------------------------------------------------------
 function blankLevel(w = DEFAULT_W, h = DEFAULT_H) {
   w = clampDim(w); h = clampDim(h);
-  return { width: w, height: h, cells: new Array(w * h).fill(CELL.EMPTY), fountains: [], spawn: null, wrapBorders: [], nextBorderId: 1 };
+  return { width: w, height: h, cells: new Array(w * h).fill(CELL.EMPTY), fountains: [], spawn: null, wrapBorders: [], nextBorderId: 1, stairs: [], nextStairId: 1 };
 }
 
 function defaultLevels() {
@@ -71,11 +71,12 @@ const TOOLS = [
   { id: 'fountain', label: 'Fountain',     hint: 'Click a cell to place/remove a fountain (original Underworld fountain). Sits on floor.' },
   { id: 'spawn',    label: 'Spawn Point',  hint: 'Click a floor cell to set where the player starts a new game on this level. Only one per level — clicking a new cell moves it; clicking it again removes it. Sits on floor.' },
   { id: 'wrap',     label: 'Wrap Border',  hint: 'Click an edge cell to mark a seamless wrap border. Set a per-direction exit (N/E/S/W) on the right; the corridor loops through that edge continuously. At least one direction is required.' },
-  { id: 'erase',    label: 'Erase',        hint: 'Hold and drag to clear cells back to empty (floor/wall/fountain/border).' }
+  { id: 'stair',    label: 'Staircase',    hint: 'Click a floor cell to place a staircase. On the right choose Up, Down or Exit — Up/Down stairs teleport the player to a target staircase you pick (any level); Exit leaves the dungeon. Sits on floor.' },
+  { id: 'erase',    label: 'Erase',        hint: 'Hold and drag to clear cells back to empty (floor/wall/fountain/border/stair).' }
 ];
 
 // point tools act on the initial press only (no drag-toggling)
-const POINT_TOOLS = { fountain: true, spawn: true, wrap: true };
+const POINT_TOOLS = { fountain: true, spawn: true, wrap: true, stair: true };
 
 // ---- Helpers ---------------------------------------------------------------
 function curLevel() { return state.levels[state.level]; }
@@ -83,6 +84,18 @@ function xy(lv, idx) { return { x: idx % lv.width, y: Math.floor(idx / lv.width)
 function idxOf(lv, x, y) { return y * lv.width + x; }
 function fountainAt(lv, idx) { return lv.fountains.indexOf(idx); }
 function borderAt(lv, idx) { return lv.wrapBorders.find(b => b.index === idx) || null; }
+function stairAt(lv, idx) { return lv.stairs.find(s => s.index === idx) || null; }
+// Clear any Up/Down stair target (on any level) that points at level `lvIndex` stair id `goneId`.
+function unlinkStairReferences(lvIndex, goneId) {
+  state.levels.forEach(l => l.stairs.forEach(s => {
+    if (s.targetLevel === lvIndex && s.targetId === goneId) { s.targetLevel = null; s.targetId = null; }
+  }));
+}
+function removeStair(lv, s) {
+  const lvIndex = state.levels.indexOf(lv);
+  lv.stairs = lv.stairs.filter(o => o !== s);
+  unlinkStairReferences(lvIndex, s.id);
+}
 
 function setStatus(msg) { state.status = msg; const el = document.getElementById('status'); if (el) el.textContent = msg; }
 
@@ -107,8 +120,17 @@ function resizeLevel(lv, nw, nh) {
   });
   let ns = null;
   if (lv.spawn != null) { const p = xy(lv, lv.spawn); if (p.x < nw && p.y < nh) ns = p.y * nw + p.x; }
-  lv.width = nw; lv.height = nh; lv.cells = nc; lv.fountains = nf; lv.spawn = ns; lv.wrapBorders = nb;
+  const nst = [];
+  const removedStairs = [];
+  lv.stairs.forEach(s => {
+    const p = xy(lv, s.index);
+    if (p.x < nw && p.y < nh) { s.index = p.y * nw + p.x; nst.push(s); }
+    else removedStairs.push(s.id);
+  });
+  const lvIndex = state.levels.indexOf(lv);
+  lv.width = nw; lv.height = nh; lv.cells = nc; lv.fountains = nf; lv.spawn = ns; lv.wrapBorders = nb; lv.stairs = nst;
   removed.forEach(id => unlinkReferences(lv, id));
+  removedStairs.forEach(id => unlinkStairReferences(lvIndex, id));
 }
 
 // ---- Painting --------------------------------------------------------------
@@ -125,6 +147,7 @@ function applyTool(idx) {
       lv.cells[idx] = CELL.WALL;
       { const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1); } // wall can't hold a fountain
       if (lv.spawn === idx) { lv.spawn = null; structural = true; }           // wall can't hold a spawn
+      { const s = stairAt(lv, idx); if (s) { removeStair(lv, s); structural = true; } } // wall can't hold a stair
       break;
     case 'fountain': {
       const f = fountainAt(lv, idx);
@@ -155,6 +178,16 @@ function applyTool(idx) {
       structural = true;                                     // updates inspector + tags
       break;
     }
+    case 'stair': {
+      const existing = stairAt(lv, idx);
+      if (existing) { removeStair(lv, existing); }           // toggle off + unlink refs pointing here
+      else {
+        if (lv.cells[idx] !== CELL.FLOOR) lv.cells[idx] = CELL.FLOOR; // stairs stand on floor
+        lv.stairs.push({ id: lv.nextStairId++, index: idx, kind: 'down', targetLevel: null, targetId: null });
+      }
+      structural = true;                                     // updates inspector + legend
+      break;
+    }
     case 'erase': {
       lv.cells[idx] = CELL.EMPTY;
       const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1);
@@ -165,6 +198,8 @@ function applyTool(idx) {
         lv.wrapBorders = lv.wrapBorders.filter(o => o.index !== idx);
         structural = true;                                   // a border (and maybe links) went away
       }
+      const s = stairAt(lv, idx);
+      if (s) { removeStair(lv, s); structural = true; }      // a stair (and maybe links) went away
       break;
     }
   }
@@ -213,6 +248,16 @@ function buildLevelsFromSidecar(json) {
         if (b.id > maxId) maxId = b.id;
       });
       lv.nextBorderId = maxId + 1;
+      let maxStairId = 0;
+      (jl.stairs || []).forEach(s => {
+        lv.stairs.push({
+          id: s.id, index: s.y * w + s.x, kind: s.kind || 'down',
+          targetLevel: Number.isFinite(s.targetLevel) ? s.targetLevel : null,
+          targetId: Number.isFinite(s.targetId) ? s.targetId : null
+        });
+        if (s.id > maxStairId) maxStairId = s.id;
+      });
+      lv.nextStairId = maxStairId + 1;
       levels.push(lv);
     } else {
       levels.push(blankLevel());
@@ -298,7 +343,12 @@ function buildSidecar() {
         height: lv.height,
         cells: lv.cells.slice(),               // 0=empty 1=floor 2=wall (row-major)
         fountains: lv.fountains.map(i => xy(lv, i)),
-        wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(lv, b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } }))
+        wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(lv, b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } })),
+        stairs: lv.stairs.map(s => {
+          const o = { id: s.id, ...xy(lv, s.index), kind: s.kind };
+          if (s.kind !== 'exit') { o.targetLevel = s.targetLevel; o.targetId = s.targetId; }
+          return o;
+        })
       };
       // Only emit spawn when one is painted; the engine treats an absent key as "no spawn".
       if (lv.spawn != null) out.spawn = xy(lv, lv.spawn);
@@ -315,11 +365,26 @@ function bordersMissingExit() {
   return bad;
 }
 
+// Up/Down stairs with no target staircase chosen do nothing in-game.
+function stairsMissingTarget() {
+  const bad = [];
+  state.levels.forEach((lv, li) => lv.stairs.forEach(s => {
+    if (s.kind !== 'exit' && (s.targetLevel == null || s.targetId == null)) bad.push('L' + (li + 1) + ' S' + s.id);
+  }));
+  return bad;
+}
+
 async function saveMap() {
   const bad = bordersMissingExit();
   if (bad.length) {
     const ok = confirm('These wrap borders have no exit direction set and will do nothing in-game:\n  ' +
       bad.join(', ') + '\n\nEach wrap border should define at least one direction. Save anyway?');
+    if (!ok) return;
+  }
+  const badStairs = stairsMissingTarget();
+  if (badStairs.length) {
+    const ok = confirm('These Up/Down staircases have no target staircase chosen and will do nothing in-game:\n  ' +
+      badStairs.join(', ') + '\n\nEach Up/Down stair should point at a target staircase (or be set to Exit). Save anyway?');
     if (!ok) return;
   }
   const p = await ipcRenderer.invoke('dialog:saveDng');
@@ -368,6 +433,7 @@ function cellClass(lv, idx) {
   else cls.push('cell-empty');
   if (lv.spawn === idx) cls.push('cell-spawn');
   if (borderAt(lv, idx)) cls.push('cell-border');
+  if (stairAt(lv, idx)) cls.push('cell-stair');
   if (state.selected === idx) cls.push('selected');
   return cls.join(' ');
 }
@@ -394,6 +460,13 @@ function fillCell(node, lv, idx) {
     const sm = el('div', 'spawn-mark', '\u2605');
     sm.style.fontSize = Math.max(10, Math.round(cellPx * 0.5)) + 'px';
     node.appendChild(sm);
+  }
+  const st = stairAt(lv, idx);
+  if (st) {
+    const glyph = st.kind === 'up' ? '▲' : st.kind === 'exit' ? '🚪' : '▼';
+    const km = el('div', 'stair-mark', glyph);
+    km.style.fontSize = Math.max(9, Math.round(cellPx * 0.44)) + 'px';
+    node.appendChild(km);
   }
 }
 
@@ -532,10 +605,65 @@ function render() {
     });
   }
 
+  // ---- Staircases section
+  inspector.appendChild(el('h2', null, 'Staircases \u2014 Level ' + (state.level + 1)));
+  if (lv.stairs.length === 0) {
+    inspector.appendChild(el('div', 'muted', 'No staircases yet. Pick the Staircase tool and click a floor cell. Set each stair to Up, Down or Exit \u2014 Up/Down stairs teleport the player to the target staircase you choose (any level); Exit leaves the dungeon.'));
+  } else {
+    // Every stair that can be travelled TO (Up/Down on any level; Exit stairs are not destinations).
+    const targets = [];
+    state.levels.forEach((ol, oi) => ol.stairs.forEach(os => { if (os.kind !== 'exit') targets.push({ level: oi, stair: os }); }));
+    lv.stairs.forEach(sd => {
+      const p = xy(lv, sd.index);
+      const needsTarget = sd.kind !== 'exit';
+      const hasTarget = sd.targetLevel != null && sd.targetId != null;
+      const row = el('div', 'border-row' + (needsTarget && !hasTarget ? ' border-row-warn' : ''));
+      row.appendChild(el('div', 'border-id', 'S' + sd.id + '  (' + p.x + ',' + p.y + ')'));
+
+      const kline = el('div', 'dir-line');
+      kline.appendChild(el('div', 'dir-label', 'Kind'));
+      const ksel = document.createElement('select');
+      ksel.className = 'exit-select';
+      [['down', 'Down \u25BC'], ['up', 'Up \u25B2'], ['exit', 'Exit dungeon']].forEach(([v, t]) => {
+        const op = document.createElement('option'); op.value = v; op.textContent = t; ksel.appendChild(op);
+      });
+      ksel.value = sd.kind;
+      ksel.onchange = () => { sd.kind = ksel.value; if (sd.kind === 'exit') { sd.targetLevel = null; sd.targetId = null; } render(); };
+      kline.appendChild(ksel);
+      row.appendChild(kline);
+
+      if (needsTarget) {
+        const tline = el('div', 'dir-line');
+        tline.appendChild(el('div', 'dir-label', 'Target'));
+        const tsel = document.createElement('select');
+        tsel.className = 'exit-select';
+        const none = document.createElement('option'); none.value = ''; none.textContent = '(choose staircase)'; tsel.appendChild(none);
+        targets.forEach(({ level, stair }) => {
+          if (level === state.level && stair.id === sd.id) return;   // a stair can't target itself
+          const tp = xy(state.levels[level], stair.index);
+          const op = document.createElement('option');
+          op.value = level + ':' + stair.id;
+          op.textContent = '\u2192 L' + (level + 1) + ' S' + stair.id + ' (' + tp.x + ',' + tp.y + ')';
+          tsel.appendChild(op);
+        });
+        tsel.value = hasTarget ? (sd.targetLevel + ':' + sd.targetId) : '';
+        tsel.onchange = () => {
+          if (!tsel.value) { sd.targetLevel = null; sd.targetId = null; }
+          else { const parts = tsel.value.split(':'); sd.targetLevel = parseInt(parts[0], 10); sd.targetId = parseInt(parts[1], 10); }
+          render();
+        };
+        tline.appendChild(tsel);
+        row.appendChild(tline);
+        if (!hasTarget) row.appendChild(el('div', 'warn-msg', '\u26A0 Up/Down stairs need a target staircase.'));
+      }
+      inspector.appendChild(row);
+    });
+  }
+
   inspector.appendChild(el('h2', null, 'Legend'));
   const legend = el('div', 'legend');
   [['swatch-floor', 'Floor (checkerboard)'], ['swatch-wall', 'Wall (grey brick)'],
-   ['swatch-fountain', 'Fountain'], ['swatch-spawn', 'Spawn point'], ['swatch-wrap', 'Wrap border']].forEach(([sw, name]) => {
+   ['swatch-fountain', 'Fountain'], ['swatch-spawn', 'Spawn point'], ['swatch-wrap', 'Wrap border'], ['swatch-stair', 'Staircase (up/down/exit)']].forEach(([sw, name]) => {
     const r = el('div', 'legend-row');
     r.appendChild(el('div', 'tool-swatch ' + sw));
     r.appendChild(el('div', null, name));

@@ -34,6 +34,10 @@ public static class DeceitLoader
     [Serializable] public class DeceitExits { public int N, E, S, W; }
     [Serializable] public class DeceitPoint { public int x, y; }
     [Serializable] public class DeceitBorder { public int id, x, y; public DeceitExits exits; }
+    // A staircase placed in a cell. kind: "up" | "down" | "exit".
+    // For up/down, targetLevel is a sidecar level index (0-based) and targetId is the
+    // id of the destination stair on that level. For "exit" those fields are unused.
+    [Serializable] public class DeceitStair { public int id, x, y; public string kind; public int targetLevel, targetId; }
     [Serializable] public class DeceitLevel
     {
         public int index, width, height;
@@ -41,6 +45,7 @@ public static class DeceitLoader
         public DeceitPoint spawn;          // player start cell for this level (may be null)
         public DeceitPoint[] fountains;    // cell coordinates
         public DeceitBorder[] wrapBorders; // seamless-wrap link markers (used in a later step)
+        public DeceitStair[] stairs;       // staircases (up/down/exit) for inter-level travel
     }
     [Serializable] public class DeceitMap { public int version, tilesPerCell; public DeceitLevel[] levels; }
 
@@ -219,6 +224,23 @@ public static class DeceitLoader
         else
         {
             ChooseSpawnCell(sc.cells, cw, ch);
+        }
+
+        // Mark staircase centre tiles as stairs so the minimap draws the stair icon.
+        if (sc.stairs != null)
+        {
+            for (int i = 0; i < sc.stairs.Length; i++)
+            {
+                DeceitStair st = sc.stairs[i];
+                if (st == null) continue;
+                if (st.x < 0 || st.x >= cw || st.y < 0 || st.y >= ch) continue;
+                int stx = st.x * TilesPerCell + TilesPerCell / 2;
+                int sty = (ch - 1 - st.y) * TilesPerCell + TilesPerCell / 2; // N/S flip
+                if (stx >= 0 && stx < gw && sty >= 0 && sty < gh)
+                {
+                    level.tiles[stx, sty].isStair = true;
+                }
+            }
         }
 
         Debug.Log($"[DeceitLoader] Built level {uwLevel} from sidecar ({cw}×{ch} cells → {gw}×{gh} tiles).");

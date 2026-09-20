@@ -731,6 +731,9 @@ public class FrontEnd : MonoBehaviour
 
             // Spawn the runtime mini-map overlay (bottom-left of screen).
             DeceitMinimap.Ensure();
+
+            // Drive authored staircases (up/down/exit) for inter-level travel.
+            DeceitStairManager.Ensure();
         }
 
         Destroy(gameObject);

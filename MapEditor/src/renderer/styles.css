@@ -124,3 +124,9 @@ body {
 .legend { display: flex; flex-direction: column; gap: 8px; }
 .legend-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .legend-row .tool-swatch { width: 24px; height: 24px; }
+
+/* ---- Staircase ---- */
+.swatch-stair { background: #16323f; border: 2px solid #38bdf8; position: relative; }
+.swatch-stair::after { content: '\25B2'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #38bdf8; }
+.cell-stair { box-shadow: inset 0 0 0 3px #38bdf8; }
+.stair-mark { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cdeeff; text-shadow: 0 0 4px #000, 0 0 2px #000; pointer-events: none; }
