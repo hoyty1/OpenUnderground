@@ -144,9 +144,9 @@ public static class DeceitLoader
                         t.type = isPassable ? 1 : 0;
                         if (isPassable)
                         {
-                            // Checkerboard by U4 cell: slot 0 = black, slot 1 = gold.
+                            // True per-tile checkerboard within every cell: slot 0=black, slot 1=gold.
                             // LevelGeometry overrides mats[48] and mats[49] in deceit mode.
-                            t.floorTexture = (col + row) % 2;
+                            t.floorTexture = (dx + dy) % 2;
                         }
                     }
                 }
