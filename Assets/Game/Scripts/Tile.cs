@@ -8,6 +8,9 @@ public class Tile
    // derived data, from the loaded tiles
    public int type;
    public int floorHeight;
+   // Ceiling height for this tile, in the same 0..16 units as floorHeight.
+   // Defaults to 16 (the classic full-height ceiling) so all legacy content is unchanged.
+   public int ceilHeight = 16;
    public int floorTexture;
    public int doorFrob;
    public int wallTexture;

@@ -41,6 +41,12 @@ public static class DeceitLoader
     // A decorative world object (fountain-style) placed in a cell. type == EObjectType value
     // (== OBJECTS.GR sprite index). x,y are cell coordinates.
     [Serializable] public class DeceitObject { public int type, x, y; }
+    // Per-cell sub-tile texture overrides (sidecar version 4), authored in the zoom editor.
+    // cell = row-major cell index (cy*width+cx) in EDITOR space (row 0 = north).
+    // floor/wall are length TilesPerCell*TilesPerCell (121), row-major within the cell with
+    // sub-row 0 = north and sub-col 0 = west. Each entry is a floorMat/wallMat index, or -1
+    // = "no sub override" (fall back to the cell's uniform floor / neighbour wall default).
+    [Serializable] public class DeceitSubtile { public int cell; public int[] floor; public int[] wall; }
     [Serializable] public class DeceitLevel
     {
         public int index, width, height;
@@ -59,6 +65,11 @@ public static class DeceitLoader
         public int[] floorTex;
         public int ceilTex;
         public DeceitObject[] objects;     // decorative world objects (cell coordinates)
+        // ---- Per-cell ceiling height + sub-tile textures (sidecar version 4) ----
+        // cellHeight is row-major, length width*height, aligned to cells[]. 0 = default (16),
+        //   otherwise the ceiling/wall height in 1..16 units (JsonUtility reports absent as 0).
+        public int[] cellHeight;
+        public DeceitSubtile[] subtiles;   // sparse: only cells painted in the zoom editor
     }
     [Serializable] public class DeceitMap { public int version, tilesPerCell; public DeceitLevel[] levels; }
 
@@ -273,6 +284,13 @@ public static class DeceitLoader
 
         bool haveWallTex  = sc.wallTex  != null && sc.wallTex.Length  >= cw * ch;
         bool haveFloorTex = sc.floorTex != null && sc.floorTex.Length >= cw * ch;
+        bool haveCellHeight = sc.cellHeight != null && sc.cellHeight.Length >= cw * ch;
+
+        // Index the sparse sub-tile overrides by editor cell index for O(1) lookup.
+        var subMap = new System.Collections.Generic.Dictionary<int, DeceitSubtile>();
+        if (sc.subtiles != null)
+            foreach (DeceitSubtile stx in sc.subtiles)
+                if (stx != null) subMap[stx.cell] = stx;
 
         for (int cy = 0; cy < ch; cy++)
         {
@@ -286,6 +304,19 @@ public static class DeceitLoader
                 if (isPassable && haveFloorTex)
                     floorSlot = floorSlotFor(sc.floorTex[cy * cw + cx]);
 
+                // Per-cell ceiling height (0 = default 16), applied to every floor tile of the cell.
+                int cellCeil = 16;
+                if (isPassable && haveCellHeight)
+                {
+                    int hv = sc.cellHeight[cy * cw + cx];
+                    if (hv > 0) cellCeil = Mathf.Clamp(hv, 1, 16);
+                }
+
+                // Sub-tile floor overrides for this cell (null = none).
+                int[] subFloor = null;
+                if (isPassable && subMap.TryGetValue(cy * cw + cx, out DeceitSubtile subCell) && subCell != null)
+                    subFloor = subCell.floor;
+
                 int uxBase = cx * TilesPerCell;
                 // Flip N/S: sidecar row 0 is north (minimap top). +z is north in-world,
                 // so build sidecar row cy at world row (ch-1-cy) to match compass/minimap.
@@ -298,9 +329,16 @@ public static class DeceitLoader
                         t.type = isPassable ? 1 : 0;
                         if (isPassable)
                         {
-                            t.floorTexture = (floorSlot >= 0)
-                                ? floorSlot            // uniform explicit floor
-                                : (dx + dy) % 2;       // gold/black checkerboard
+                            // Editor sub-grid row 0 = north = engine dy = TilesPerCell-1.
+                            int subIdx = (TilesPerCell - 1 - dy) * TilesPerCell + dx;
+                            int subMat = (subFloor != null && subIdx < subFloor.Length) ? subFloor[subIdx] : -1;
+                            if (subMat >= 0)
+                                t.floorTexture = floorSlotFor(subMat);   // individual painted floor
+                            else
+                                t.floorTexture = (floorSlot >= 0)
+                                    ? floorSlot            // uniform explicit floor
+                                    : (dx + dy) % 2;       // gold/black checkerboard
+                            t.ceilHeight = cellCeil;
                         }
                     }
                 }
@@ -353,6 +391,33 @@ public static class DeceitLoader
                         int slot = wallSlotFor(eMat);
                         for (int dy = 0; dy < TilesPerCell; dy++)
                             level.tiles[uxBase + TilesPerCell - 1, uyBase + dy].wallTexture = slot;
+                    }
+                }
+            }
+        }
+
+        // ---- Sub-tile wall overrides: individual wall faces painted in the zoom editor win
+        // over the neighbour-cell defaults set above. ----
+        if (sc.subtiles != null)
+        {
+            foreach (DeceitSubtile st in sc.subtiles)
+            {
+                if (st == null || st.wall == null) continue;
+                int scx = st.cell % cw;
+                int scy = st.cell / cw;
+                if (scx < 0 || scx >= cw || scy < 0 || scy >= ch) continue;
+                if (sc.cells[scy * cw + scx] != 1) continue; // only floor cells draw walls
+                int uxBase = scx * TilesPerCell;
+                int uyBase = (ch - 1 - scy) * TilesPerCell;
+                for (int dy = 0; dy < TilesPerCell; dy++)
+                {
+                    for (int dx = 0; dx < TilesPerCell; dx++)
+                    {
+                        int subIdx = (TilesPerCell - 1 - dy) * TilesPerCell + dx;
+                        if (subIdx >= st.wall.Length) continue;
+                        int mat = st.wall[subIdx];
+                        if (mat >= 0)
+                            level.tiles[uxBase + dx, uyBase + dy].wallTexture = wallSlotFor(mat);
                     }
                 }
             }

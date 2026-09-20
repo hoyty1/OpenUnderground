@@ -276,6 +276,37 @@ public class LevelGeometry : LevelObject
         int[] h = new int[4];
         int[] nh = new int[4];
 
+        // Emits a double-sided vertical quad (a ceiling "soffit") spanning heights yLowH..yHighH
+        // along the horizontal edge a->b. Added to the ceiling submesh so it uses the ceiling
+        // material and blocks sight the same way the rest of the ceiling does.
+        void AddSoffit(Vector3 a, Vector3 b, int yLowH, int yHighH)
+        {
+            float yLow = LevelLoader.yScale * yLowH;
+            float yHigh = LevelLoader.yScale * yHighH;
+            int si = verts.Count;
+            verts.Add(new Vector3(a.x, yHigh, a.z));
+            verts.Add(new Vector3(b.x, yHigh, b.z));
+            verts.Add(new Vector3(a.x, yLow, a.z));
+            verts.Add(new Vector3(b.x, yLow, b.z));
+            uvs.Add(uv0);
+            uvs.Add(uv1);
+            uvs.Add(uv2);
+            uvs.Add(uv3);
+            ceilingOnlyTris.Add(si);
+            ceilingOnlyTris.Add(si + 2);
+            ceilingOnlyTris.Add(si + 1);
+            ceilingOnlyTris.Add(si + 1);
+            ceilingOnlyTris.Add(si + 2);
+            ceilingOnlyTris.Add(si + 3);
+            // back faces (double-sided so winding never matters)
+            ceilingOnlyTris.Add(si);
+            ceilingOnlyTris.Add(si + 1);
+            ceilingOnlyTris.Add(si + 2);
+            ceilingOnlyTris.Add(si + 1);
+            ceilingOnlyTris.Add(si + 3);
+            ceilingOnlyTris.Add(si + 2);
+        }
+
         for (int y = 0; y < level.Height; ++y)
         {
             for (int x = 0; x < level.Width; ++x)
@@ -310,10 +341,11 @@ public class LevelGeometry : LevelObject
                     Vector3 v5 = v1;
                     Vector3 v6 = v2;
                     Vector3 v7 = v3;
-                    v4.y = LevelLoader.yScale * 16;
-                    v5.y = LevelLoader.yScale * 16;
-                    v6.y = LevelLoader.yScale * 16;
-                    v7.y = LevelLoader.yScale * 16;
+                    // Ceiling drops to this tile's authored ceiling height (default 16 = classic full height).
+                    v4.y = LevelLoader.yScale * t.ceilHeight;
+                    v5.y = LevelLoader.yScale * t.ceilHeight;
+                    v6.y = LevelLoader.yScale * t.ceilHeight;
+                    v7.y = LevelLoader.yScale * t.ceilHeight;
 
                     int vi = verts.Count;
                     
@@ -491,13 +523,17 @@ public class LevelGeometry : LevelObject
 
                             if (((1 << t.type) & f.typeMask) != 0 && (nh[f.ln] > h[f.lt] || nh[f.rn] > h[f.rt]))
                             {
-                                Vector2 uvw0 = new Vector2(1, 1.0f - LevelLoader.texScale * (16 - nh[f.ln]));
-                                Vector2 uvw1 = new Vector2(0, 1.0f - LevelLoader.texScale * (16 - nh[f.rn]));
+                                // Clamp the wall top to this tile's ceiling so tall neighbor
+                                // walls never poke above a lowered ceiling.
+                                int topL = Mathf.Min(nh[f.ln], t.ceilHeight);
+                                int topR = Mathf.Min(nh[f.rn], t.ceilHeight);
+                                Vector2 uvw0 = new Vector2(1, 1.0f - LevelLoader.texScale * (16 - topL));
+                                Vector2 uvw1 = new Vector2(0, 1.0f - LevelLoader.texScale * (16 - topR));
                                 Vector2 uvw2 = new Vector2(1, 1.0f - LevelLoader.texScale * (16 - h[f.lt]));
                                 Vector2 uvw3 = new Vector2(0, 1.0f - LevelLoader.texScale * (16 - h[f.rt]));
                                 Vector3 wv0 = v[f.lt], wv1 = v[f.rt], wv2 = v[f.lt], wv3 = v[f.rt];
-                                wv0.y = LevelLoader.yScale * nh[f.ln];
-                                wv1.y = LevelLoader.yScale * nh[f.rn];
+                                wv0.y = LevelLoader.yScale * topL;
+                                wv1.y = LevelLoader.yScale * topR;
                                 wv2.y = LevelLoader.yScale * h[f.lt];
                                 wv3.y = LevelLoader.yScale * h[f.rt];
                                 
@@ -599,6 +635,41 @@ public class LevelGeometry : LevelObject
                                 subMeshTris.Add(vi + 2);
                                 subMeshTris.Add(vi + 3);
                             }
+                        }
+                    }
+
+                    // Ceiling soffits: where an adjacent walkable floor tile has a HIGHER
+                    // ceiling than this tile, close the vertical gap in the ceiling plane so
+                    // the player never sees through to the void above a low-ceiling room.
+                    if (loadedLevel != 9 && t.type != 0 && t.floorHeight != 15)
+                    {
+                        Vector3 sw = LevelLoader.xzScale * (new Vector3(x, 0, y));
+                        Vector3 se = LevelLoader.xzScale * (new Vector3(x + 1, 0, y));
+                        Vector3 nw = LevelLoader.xzScale * (new Vector3(x, 0, y + 1));
+                        Vector3 ne = LevelLoader.xzScale * (new Vector3(x + 1, 0, y + 1));
+                        if (y + 1 < level.Height)
+                        {
+                            Tile n = level.tiles[x, y + 1];
+                            if (n.type != 0 && n.floorHeight != 15 && n.ceilHeight > t.ceilHeight)
+                                AddSoffit(nw, ne, t.ceilHeight, n.ceilHeight);
+                        }
+                        if (y - 1 >= 0)
+                        {
+                            Tile n = level.tiles[x, y - 1];
+                            if (n.type != 0 && n.floorHeight != 15 && n.ceilHeight > t.ceilHeight)
+                                AddSoffit(sw, se, t.ceilHeight, n.ceilHeight);
+                        }
+                        if (x + 1 < level.Width)
+                        {
+                            Tile n = level.tiles[x + 1, y];
+                            if (n.type != 0 && n.floorHeight != 15 && n.ceilHeight > t.ceilHeight)
+                                AddSoffit(se, ne, t.ceilHeight, n.ceilHeight);
+                        }
+                        if (x - 1 >= 0)
+                        {
+                            Tile n = level.tiles[x - 1, y];
+                            if (n.type != 0 && n.floorHeight != 15 && n.ceilHeight > t.ceilHeight)
+                                AddSoffit(sw, nw, t.ceilHeight, n.ceilHeight);
                         }
                     }
                 }

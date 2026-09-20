@@ -81,6 +81,9 @@ function blankLevel(w = DEFAULT_W, h = DEFAULT_H) {
     floorTex: new Array(w * h).fill(-1),  // per-cell floor texture (0-51, -1 = gold/black checkerboard)
     ceilTex: null,                        // level-wide ceiling texture (0-51 floor index, null = engine default)
     objects: [],                          // decorative objects: { type, index }
+    cellHeight: new Array(w * h).fill(0), // per-cell ceiling/wall height, 0 = engine default (16)
+    subFloor: {},                         // sparse: cellIdx -> Array(121) floorMat idx (-1 = none), sub-row 0 = north
+    subWall: {},                          // sparse: cellIdx -> Array(121) wallMat idx (-1 = none), sub-row 0 = north
     fountains: [], spawn: null, wrapBorders: [], nextBorderId: 1, stairs: [], nextStairId: 1
   };
 }
@@ -106,6 +109,10 @@ const state = {
   selWall: 0,        // currently selected wall texture index (Wall Texture tool)
   selFloor: 0,       // currently selected floor texture index (Floor Texture tool)
   selObject: DECOR_OBJECTS[0].type, // currently selected decorative object (Place Object tool)
+  zoomCell: null,    // cell idx currently open in the sub-tile zoom editor (null = closed)
+  zoomMode: 'floor', // 'floor' | 'wall' — which sub-layer the zoom editor paints
+  zoomErase: false,  // when true, zoom painting clears the sub override (-1)
+  zoomPainting: false, zoomStroke: null,
   status: 'Level 1 pre-loaded from the original Deceit dungeon. Resize the grid to draw larger layouts; paint with the palette on the left.'
 };
 
@@ -114,6 +121,7 @@ const TOOLS = [
   { id: 'wall',     label: 'Wall',         hint: 'Solid grey-brick wall cell. Hold and drag to trace non-square rooms.' },
   { id: 'walltex',  label: 'Wall Texture', hint: 'Pick any of the 210 game wall textures below, then hold and drag over WALL cells to skin them. The wall face rendered toward a neighbouring floor uses this texture.' },
   { id: 'floortex', label: 'Floor Texture',hint: 'Pick any of the 52 game floor textures below, then hold and drag over FLOOR cells. A textured cell replaces the gold/black checkerboard for that cell.' },
+  { id: 'detail',   label: 'Detail / Zoom',hint: 'Click a FLOOR cell to zoom into its 11×11 sub-grid. Paint individual floor and wall sub-textures and set the cell height (2–16); the ceiling drops to match and soffits close the step down to taller neighbours.' },
   { id: 'ceiling',  label: 'Ceiling',      hint: 'Level-wide ceiling texture. Click a floor texture below to set the ceiling for the whole level, or choose None for the engine default.' },
   { id: 'object',   label: 'Place Object', hint: 'Pick a decorative object below, then click a floor cell to place/remove it (fountains, tables, braziers, boulders and more). Placed like the original fountains.' },
   { id: 'fountain', label: 'Fountain',     hint: 'Click a cell to place/remove a fountain (original Underworld fountain). Sits on floor.' },
@@ -124,7 +132,7 @@ const TOOLS = [
 ];
 
 // point tools act on the initial press only (no drag-toggling)
-const POINT_TOOLS = { fountain: true, spawn: true, wrap: true, stair: true, object: true };
+const POINT_TOOLS = { fountain: true, spawn: true, wrap: true, stair: true, object: true, detail: true };
 // tools whose left-palette shows a texture/object picker grid
 const PICKER_TOOLS = { walltex: true, floortex: true, ceiling: true, object: true };
 
@@ -159,12 +167,18 @@ function resizeLevel(lv, nw, nh) {
   const nc = new Array(nw * nh).fill(CELL.EMPTY);
   const nwt = new Array(nw * nh).fill(-1);
   const nft = new Array(nw * nh).fill(-1);
+  const nch = new Array(nw * nh).fill(0);
+  const nsf = {}, nsw = {};
   const cw = Math.min(nw, lv.width), ch = Math.min(nh, lv.height);
   for (let y = 0; y < ch; y++)
     for (let x = 0; x < cw; x++) {
-      nc[y * nw + x] = lv.cells[y * lv.width + x];
-      nwt[y * nw + x] = lv.wallTex[y * lv.width + x];
-      nft[y * nw + x] = lv.floorTex[y * lv.width + x];
+      const oi = y * lv.width + x, ni = y * nw + x;
+      nc[ni] = lv.cells[oi];
+      nwt[ni] = lv.wallTex[oi];
+      nft[ni] = lv.floorTex[oi];
+      nch[ni] = lv.cellHeight[oi];
+      if (lv.subFloor[oi]) nsf[ni] = lv.subFloor[oi];
+      if (lv.subWall[oi]) nsw[ni] = lv.subWall[oi];
     }
   const nobj = [];
   lv.objects.forEach(o => { const p = xy(lv, o.index); if (p.x < nw && p.y < nh) nobj.push({ type: o.type, index: p.y * nw + p.x }); });
@@ -188,6 +202,7 @@ function resizeLevel(lv, nw, nh) {
   });
   const lvIndex = state.levels.indexOf(lv);
   lv.width = nw; lv.height = nh; lv.cells = nc; lv.wallTex = nwt; lv.floorTex = nft; lv.objects = nobj; lv.fountains = nf; lv.spawn = ns; lv.wrapBorders = nb; lv.stairs = nst;
+  lv.cellHeight = nch; lv.subFloor = nsf; lv.subWall = nsw;
   removed.forEach(id => unlinkReferences(lv, id));
   removedStairs.forEach(id => unlinkStairReferences(lvIndex, id));
 }
@@ -204,6 +219,7 @@ function applyTool(idx) {
       break;
     case 'wall':
       lv.cells[idx] = CELL.WALL;
+      delete lv.subFloor[idx]; delete lv.subWall[idx]; lv.cellHeight[idx] = 0; // wall clears floor detail
       { const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1); } // wall can't hold a fountain
       { const o = objectAt(lv, idx); if (o >= 0) lv.objects.splice(o, 1); }     // wall can't hold an object
       if (lv.spawn === idx) { lv.spawn = null; structural = true; }           // wall can't hold a spawn
@@ -217,6 +233,11 @@ function applyTool(idx) {
       break;
     case 'ceiling':
       break;                                                 // ceiling is level-wide; set via the picker
+    case 'detail':
+      if (lv.cells[idx] !== CELL.FLOOR) setStatus('Detail / Zoom works on floor cells \u2014 paint this cell as floor first.');
+      else { state.zoomCell = idx; if (state.zoomMode !== 'wall') state.zoomMode = 'floor'; }
+      structural = true;                                     // (re)render to open the zoom modal
+      break;
     case 'object': {
       const oi = objectAt(lv, idx);
       if (oi >= 0) { lv.objects.splice(oi, 1); }             // toggle off
@@ -268,6 +289,7 @@ function applyTool(idx) {
     case 'erase': {
       lv.cells[idx] = CELL.EMPTY;
       lv.wallTex[idx] = -1; lv.floorTex[idx] = -1;
+      delete lv.subFloor[idx]; delete lv.subWall[idx]; lv.cellHeight[idx] = 0;
       { const o = objectAt(lv, idx); if (o >= 0) lv.objects.splice(o, 1); }
       const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1);
       if (lv.spawn === idx) { lv.spawn = null; structural = true; }
@@ -301,7 +323,7 @@ function paintAt(idx, isDragEnter) {
   refreshCell(idx);
 }
 
-function stopPaint() { state.painting = false; state.strokeCells = null; }
+function stopPaint() { state.painting = false; state.strokeCells = null; state.zoomPainting = false; state.zoomStroke = null; }
 
 // ---- File I/O --------------------------------------------------------------
 // Build the full level list from a DECEIT.map.json sidecar object (authoritative:
@@ -317,6 +339,13 @@ function buildLevelsFromSidecar(json) {
       for (let k = 0; k < Math.min(jl.cells.length, w * h); k++) lv.cells[k] = jl.cells[k];
       if (Array.isArray(jl.wallTex)) for (let k = 0; k < Math.min(jl.wallTex.length, w * h); k++) lv.wallTex[k] = jl.wallTex[k];
       if (Array.isArray(jl.floorTex)) for (let k = 0; k < Math.min(jl.floorTex.length, w * h); k++) lv.floorTex[k] = jl.floorTex[k];
+      if (Array.isArray(jl.cellHeight)) for (let k = 0; k < Math.min(jl.cellHeight.length, w * h); k++) lv.cellHeight[k] = jl.cellHeight[k] || 0;
+      (jl.subtiles || []).forEach(st => {
+        if (!st || !Number.isFinite(st.cell) || st.cell < 0 || st.cell >= w * h) return;
+        const N = TILES_PER_CELL * TILES_PER_CELL;
+        if (Array.isArray(st.floor) && st.floor.some(v => v >= 0)) { const a = new Array(N).fill(-1); for (let k = 0; k < Math.min(st.floor.length, N); k++) a[k] = st.floor[k]; lv.subFloor[st.cell] = a; }
+        if (Array.isArray(st.wall) && st.wall.some(v => v >= 0)) { const a = new Array(N).fill(-1); for (let k = 0; k < Math.min(st.wall.length, N); k++) a[k] = st.wall[k]; lv.subWall[st.cell] = a; }
+      });
       lv.ceilTex = (Number.isFinite(jl.ceilTex) && jl.ceilTex > 0) ? (jl.ceilTex - 1) : null; // sidecar ceilTex is 1-based (0 = engine default)
       (jl.objects || []).forEach(o => { if (o.x < w && o.y < h) lv.objects.push({ type: o.type, index: o.y * w + o.x }); });
       (jl.fountains || []).forEach(f => lv.fountains.push(f.y * w + f.x));
@@ -417,7 +446,7 @@ function buildDngBuffer() {
 
 function buildSidecar() {
   return {
-    version: 3,
+    version: 4,
     tilesPerCell: TILES_PER_CELL,
     levels: state.levels.map((lv, index) => {
       const out = {
@@ -429,6 +458,8 @@ function buildSidecar() {
         floorTex: lv.floorTex.slice(),         // per-cell floor texture (0-51, -1 = gold/black checkerboard)
         ceilTex: lv.ceilTex == null ? 0 : lv.ceilTex + 1,  // level-wide ceiling, 1-based (0 = engine default)
         objects: lv.objects.map(o => ({ type: o.type, ...xy(lv, o.index) })),
+        cellHeight: lv.cellHeight.slice(),     // per-cell height, 0 = default 16 (row-major, aligned to cells)
+        subtiles: buildSubtiles(lv),           // sparse per-cell 11×11 floor/wall sub-texture overrides
         fountains: lv.fountains.map(i => xy(lv, i)),
         wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(lv, b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } })),
         stairs: lv.stairs.map(s => {
@@ -459,6 +490,8 @@ function texCapWarnings() {
     const w = new Set(), f = new Set();
     lv.wallTex.forEach(t => { if (t >= 0) w.add(t); });
     lv.floorTex.forEach(t => { if (t >= 0) f.add(t); });
+    Object.values(lv.subWall).forEach(a => a.forEach(t => { if (t >= 0) w.add(t); }));   // sub-tile walls count too
+    Object.values(lv.subFloor).forEach(a => a.forEach(t => { if (t >= 0) f.add(t); })); // sub-tile floors count too
     if (w.size > MAX_WALL_TEX) bad.push('L' + (li + 1) + ': ' + w.size + ' distinct wall textures (max ' + MAX_WALL_TEX + ')');
     if (f.size > MAX_FLOOR_TEX) bad.push('L' + (li + 1) + ': ' + f.size + ' distinct floor textures (max ' + MAX_FLOOR_TEX + ')');
   });
@@ -540,6 +573,7 @@ function cellClass(lv, idx) {
   if (lv.spawn === idx) cls.push('cell-spawn');
   if (borderAt(lv, idx)) cls.push('cell-border');
   if (stairAt(lv, idx)) cls.push('cell-stair');
+  if ((lv.subFloor && (lv.subFloor[idx] || lv.subWall[idx])) || (lv.cellHeight && lv.cellHeight[idx] > 0)) cls.push('cell-detail');
   if (state.selected === idx) cls.push('selected');
   return cls.join(' ');
 }
@@ -863,6 +897,143 @@ function render() {
   body.appendChild(inspector);
 
   root.appendChild(body);
+
+  // Sub-tile zoom modal (open only while a valid floor cell is selected via Detail / Zoom).
+  if (state.zoomCell != null && curLevel().cells[state.zoomCell] === CELL.FLOOR) root.appendChild(buildZoomOverlay());
+  else state.zoomCell = null;
+}
+
+// ---- Sub-tile zoom editor --------------------------------------------------
+// A cell is an 11x11 grid of engine tiles. The zoom editor lets you paint each
+// tile's floor and wall face individually and set the cell's height/ceiling.
+let subCellNodes = [];
+function subGet(lv, map, idx) { let a = map[idx]; if (!a) { a = new Array(TILES_PER_CELL * TILES_PER_CELL).fill(-1); map[idx] = a; } return a; }
+function heightOf(lv, idx) { return lv.cellHeight[idx] > 0 ? lv.cellHeight[idx] : 16; }
+// Which of the cell's four sides face a non-floor neighbour (i.e. render a wall in-game).
+function solidEdges(lv, idx) {
+  const p = xy(lv, idx);
+  const isFloor = (x, y) => x >= 0 && y >= 0 && x < lv.width && y < lv.height && lv.cells[y * lv.width + x] === CELL.FLOOR;
+  return { N: !isFloor(p.x, p.y - 1), S: !isFloor(p.x, p.y + 1), W: !isFloor(p.x - 1, p.y), E: !isFloor(p.x + 1, p.y) };
+}
+// Serialise the sparse sub-texture maps into the sidecar's subtiles[] array.
+function buildSubtiles(lv) {
+  const keys = new Set();
+  Object.keys(lv.subFloor).forEach(k => { if (lv.subFloor[k].some(v => v >= 0)) keys.add(+k); });
+  Object.keys(lv.subWall).forEach(k => { if (lv.subWall[k].some(v => v >= 0)) keys.add(+k); });
+  const N = TILES_PER_CELL * TILES_PER_CELL; const out = [];
+  keys.forEach(cell => {
+    const f = lv.subFloor[cell] ? lv.subFloor[cell].slice() : new Array(N).fill(-1);
+    const w = lv.subWall[cell] ? lv.subWall[cell].slice() : new Array(N).fill(-1);
+    out.push({ cell, floor: f, wall: w });
+  });
+  return out;
+}
+function fillSubCell(node, sr, sc) {
+  const lv = curLevel(); const idx = state.zoomCell;
+  const subIdx = sr * TILES_PER_CELL + sc;
+  node.className = 'subcell'; node.textContent = ''; node.style.backgroundImage = '';
+  node.dataset.sr = sr; node.dataset.sc = sc;
+  const fArr = lv.subFloor[idx], wArr = lv.subWall[idx];
+  const edges = state._zoomEdges || solidEdges(lv, idx);
+  const wallBearing = (sr === 0 && edges.N) || (sr === TILES_PER_CELL - 1 && edges.S) || (sc === 0 && edges.W) || (sc === TILES_PER_CELL - 1 && edges.E);
+  if (state.zoomMode === 'wall') {
+    const wv = wArr ? wArr[subIdx] : -1;
+    if (wv >= 0) { node.style.backgroundImage = 'url("' + wallThumb(wv) + '")'; node.style.backgroundSize = '100% 100%'; }
+    else if (wallBearing) node.classList.add('subcell-walldefault');
+    else node.classList.add('subcell-dim');
+  } else {
+    const fv = fArr ? fArr[subIdx] : -1;
+    if (fv >= 0) { node.style.backgroundImage = 'url("' + floorThumb(fv) + '")'; node.style.backgroundSize = '100% 100%'; }
+    else if (lv.floorTex[idx] >= 0) { node.style.backgroundImage = 'url("' + floorThumb(lv.floorTex[idx]) + '")'; node.style.backgroundSize = '100% 100%'; }
+    else node.classList.add((sr + sc) % 2 ? 'subcell-gold' : 'subcell-black');
+  }
+  if (wallBearing) node.classList.add('subcell-edge');
+}
+function refreshSubCell(sr, sc) { const n = subCellNodes[sr * TILES_PER_CELL + sc]; if (n) fillSubCell(n, sr, sc); }
+function paintSub(sr, sc) {
+  const lv = curLevel(); const idx = state.zoomCell; const subIdx = sr * TILES_PER_CELL + sc;
+  const map = state.zoomMode === 'wall' ? lv.subWall : lv.subFloor;
+  const a = subGet(lv, map, idx);
+  a[subIdx] = state.zoomErase ? -1 : (state.zoomMode === 'wall' ? state.selWall : state.selFloor);
+  refreshSubCell(sr, sc);
+}
+function onSubDown(e) {
+  const c = e.target.closest('.subcell'); if (!c) return; e.preventDefault();
+  state.zoomPainting = true; state.zoomStroke = new Set();
+  const sr = +c.dataset.sr, sc = +c.dataset.sc; state.zoomStroke.add(sr * TILES_PER_CELL + sc); paintSub(sr, sc);
+}
+function onSubOver(e) {
+  if (!state.zoomPainting) return;
+  const c = e.target.closest('.subcell'); if (!c) return;
+  const sr = +c.dataset.sr, sc = +c.dataset.sc, k = sr * TILES_PER_CELL + sc;
+  if (state.zoomStroke.has(k)) return; state.zoomStroke.add(k); paintSub(sr, sc);
+}
+function closeZoom() {
+  const lv = curLevel();
+  [lv.subFloor, lv.subWall].forEach(map => Object.keys(map).forEach(k => { if (map[k].every(v => v < 0)) delete map[k]; }));
+  state.zoomCell = null; state._zoomEdges = null; state.zoomPainting = false; state.zoomStroke = null; render();
+}
+function buildZoomPicker() {
+  const wrap = el('div', 'zoom-picker');
+  const isWall = state.zoomMode === 'wall';
+  const count = isWall ? WALL_TEX_COUNT : FLOOR_TEX_COUNT;
+  const thumb = isWall ? wallThumb : floorThumb;
+  const black = isWall ? BLACK_WALL_TEX : BLACK_FLOOR_TEX;
+  wrap.appendChild(el('div', 'picker-head', (isWall ? 'Wall' : 'Floor') + ' textures (' + count + ') — click to select, then paint the grid'));
+  const grid = el('div', 'tex-grid');
+  for (let i = 0; i < count; i++) {
+    const selected = isWall ? state.selWall === i : state.selFloor === i;
+    const sw = el('div', 'tex-swatch' + (selected ? ' sel' : '') + (i === black ? ' tex-black' : ''));
+    const img = document.createElement('img'); img.src = thumb(i); img.alt = 'texture ' + i;
+    img.onerror = () => { sw.classList.add('tex-missing'); sw.textContent = String(i); };
+    sw.appendChild(img); sw.title = 'Texture ' + i + (i === black ? ' (renders solid black in-game)' : '');
+    sw.onclick = () => { if (isWall) state.selWall = i; else state.selFloor = i; state.zoomErase = false; render(); };
+    grid.appendChild(sw);
+  }
+  wrap.appendChild(grid); return wrap;
+}
+function buildZoomOverlay() {
+  const lv = curLevel(); const idx = state.zoomCell; const p = xy(lv, idx);
+  state._zoomEdges = solidEdges(lv, idx); subCellNodes = [];
+  const ov = el('div', 'zoom-overlay');
+  ov.addEventListener('pointerdown', (e) => { if (e.target === ov) closeZoom(); });
+  const modal = el('div', 'zoom-modal');
+  const head = el('div', 'zoom-head');
+  head.appendChild(el('div', 'zoom-title', 'Cell (' + p.x + ', ' + p.y + ') — sub-tile detail'));
+  head.appendChild(button('Close ✕', 'btn btn-sm', closeZoom));
+  modal.appendChild(head);
+  const ctl = el('div', 'zoom-controls');
+  ctl.appendChild(el('span', 'zoom-ctl-label', 'Cell height:'));
+  const hIn = document.createElement('input'); hIn.type = 'number'; hIn.className = 'dim-input'; hIn.min = 2; hIn.max = 16; hIn.value = heightOf(lv, idx);
+  hIn.onchange = () => {
+    let v = parseInt(hIn.value, 10); if (!Number.isFinite(v)) v = 16; v = Math.max(2, Math.min(16, v)); hIn.value = v;
+    lv.cellHeight[idx] = (v === 16 ? 0 : v);
+    setStatus('Cell (' + p.x + ',' + p.y + ') height set to ' + v + ' (ceiling matches; soffits close steps down to taller neighbours).');
+    refreshCell(idx);
+  };
+  ctl.appendChild(hIn);
+  ctl.appendChild(el('span', 'zoom-ctl-note', '2–16 (16 = default full height; ceiling drops to match)'));
+  modal.appendChild(ctl);
+  const modes = el('div', 'zoom-modes');
+  [['floor', 'Floor sub-textures'], ['wall', 'Wall sub-textures']].forEach(([m, lbl]) => {
+    modes.appendChild(button(lbl, 'tab' + (state.zoomMode === m ? ' active' : ''), () => { state.zoomMode = m; render(); }));
+  });
+  modes.appendChild(button(state.zoomErase ? 'Erasing (click to paint)' : 'Painting (click to erase)', 'btn btn-sm' + (state.zoomErase ? ' btn-warn' : ''), () => { state.zoomErase = !state.zoomErase; render(); }));
+  modal.appendChild(modes);
+  const bodyWrap = el('div', 'zoom-body');
+  bodyWrap.appendChild(buildZoomPicker());
+  const grid = el('div', 'zoom-grid');
+  grid.style.gridTemplateColumns = 'repeat(' + TILES_PER_CELL + ', 1fr)';
+  for (let sr = 0; sr < TILES_PER_CELL; sr++) for (let sc = 0; sc < TILES_PER_CELL; sc++) {
+    const cell = document.createElement('div');
+    fillSubCell(cell, sr, sc); subCellNodes[sr * TILES_PER_CELL + sc] = cell; grid.appendChild(cell);
+  }
+  grid.addEventListener('pointerdown', onSubDown); grid.addEventListener('pointerover', onSubOver);
+  bodyWrap.appendChild(grid); modal.appendChild(bodyWrap);
+  modal.appendChild(el('div', 'zoom-hint', state.zoomMode === 'wall'
+    ? 'Painting wall faces. Highlighted edge tiles face a solid neighbour and show their wall in-game; interior tiles only render if that side becomes a wall. Sub-painted faces override the cell-level Wall Texture.'
+    : 'Painting the floor. Each tile overrides the cell’s floor/checkerboard individually. North is the top row, west the left column — matching the main map.'));
+  ov.appendChild(modal); return ov;
 }
 
 // tiny DOM helpers
@@ -874,6 +1045,7 @@ function button(text, cls, onclick) { const b = el('button', cls, text); b.oncli
 window.addEventListener('pointerup', stopPaint);
 window.addEventListener('pointercancel', stopPaint);
 window.addEventListener('blur', stopPaint);
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.zoomCell != null) closeZoom(); });
 
 window.addEventListener('DOMContentLoaded', render);
 // In case the script runs after DOMContentLoaded already fired:
