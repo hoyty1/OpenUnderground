@@ -47,17 +47,21 @@ const state = {
   tool: 'floor',
   loadedDir: null,   // directory of the last opened/saved file (for the .json sidecar)
   selected: null,    // selected cell index
-  painting: false,
+  painting: false,   // true only while a pointer button is held down
+  strokeCells: null, // Set of cells already painted in the current stroke (dedupe)
   status: 'Level 1 pre-loaded from the original Deceit dungeon. Paint with the palette on the left.'
 };
 
 const TOOLS = [
-  { id: 'floor',    label: 'Floor',        hint: 'Walkable 11x11 gold/black checkerboard cell (no walls).' },
-  { id: 'wall',     label: 'Wall',         hint: 'Solid grey-brick wall cell. Click cell-by-cell to trace non-square rooms.' },
-  { id: 'fountain', label: 'Fountain',     hint: 'Place a fountain (original Underworld fountain) on a cell. Sits on floor.' },
-  { id: 'wrap',     label: 'Wrap Border',  hint: 'Mark a wrap-around border. Set its Exit to the border the player arrives at.' },
-  { id: 'erase',    label: 'Erase',        hint: 'Clear a cell back to empty (removes floor/wall/fountain/border).' }
+  { id: 'floor',    label: 'Floor',        hint: 'Walkable 11x11 gold/black checkerboard cell (no walls). Hold and drag to paint.' },
+  { id: 'wall',     label: 'Wall',         hint: 'Solid grey-brick wall cell. Hold and drag to trace non-square rooms.' },
+  { id: 'fountain', label: 'Fountain',     hint: 'Click a cell to place/remove a fountain (original Underworld fountain). Sits on floor.' },
+  { id: 'wrap',     label: 'Wrap Border',  hint: 'Click an edge cell to mark a wrap-around border. Set its Exit on the right.' },
+  { id: 'erase',    label: 'Erase',        hint: 'Hold and drag to clear cells back to empty (floor/wall/fountain/border).' }
 ];
+
+// point tools act on the initial press only (no drag-toggling)
+const POINT_TOOLS = { fountain: true, wrap: true };
 
 // ---- Helpers ---------------------------------------------------------------
 function curLevel() { return state.levels[state.level]; }
@@ -68,20 +72,22 @@ function borderAt(lv, idx) { return lv.wrapBorders.find(b => b.index === idx) ||
 function setStatus(msg) { state.status = msg; const el = document.getElementById('status'); if (el) el.textContent = msg; }
 
 // ---- Painting --------------------------------------------------------------
+// Mutates the model for a single cell. Returns true when the change affects
+// cells/UI beyond `idx` (wrap-border links, inspector) and a full render is needed.
 function applyTool(idx) {
   const lv = curLevel();
+  let structural = false;
   switch (state.tool) {
     case 'floor':
       lv.cells[idx] = CELL.FLOOR;
       break;
     case 'wall':
       lv.cells[idx] = CELL.WALL;
-      // a wall cell can't also hold a fountain
-      { const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1); }
+      { const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1); } // wall can't hold a fountain
       break;
     case 'fountain': {
       const f = fountainAt(lv, idx);
-      if (f >= 0) { lv.fountains.splice(f, 1); }        // toggle off
+      if (f >= 0) { lv.fountains.splice(f, 1); }            // toggle off
       else {
         if (lv.cells[idx] !== CELL.FLOOR) lv.cells[idx] = CELL.FLOOR; // fountains stand on floor
         lv.fountains.push(idx);
@@ -90,25 +96,47 @@ function applyTool(idx) {
     }
     case 'wrap': {
       const existing = borderAt(lv, idx);
-      if (existing) {                                   // toggle off + unlink partner
+      if (existing) {                                       // toggle off + unlink partner
         lv.wrapBorders.forEach(b => { if (b.exit === existing.id) b.exit = null; });
         lv.wrapBorders = lv.wrapBorders.filter(b => b.index !== idx);
       } else {
         lv.wrapBorders.push({ id: lv.nextBorderId++, index: idx, exit: null });
       }
+      structural = true;                                     // updates inspector + partner tags
       break;
     }
     case 'erase': {
       lv.cells[idx] = CELL.EMPTY;
       const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1);
       const b = borderAt(lv, idx);
-      if (b) { lv.wrapBorders.forEach(o => { if (o.exit === b.id) o.exit = null; }); lv.wrapBorders = lv.wrapBorders.filter(o => o.index !== idx); }
+      if (b) {
+        lv.wrapBorders.forEach(o => { if (o.exit === b.id) o.exit = null; });
+        lv.wrapBorders = lv.wrapBorders.filter(o => o.index !== idx);
+        structural = true;                                   // a border (and maybe a link) went away
+      }
       break;
     }
   }
   state.selected = idx;
-  render();
+  return structural;
 }
+
+// Apply the current tool to one cell during a pointer stroke, updating the DOM
+// incrementally (no full re-render) so drag-painting stays fast.
+function paintAt(idx, isDragEnter) {
+  if (isDragEnter && POINT_TOOLS[state.tool]) return;        // point tools: press only
+  if (state.strokeCells) {
+    if (state.strokeCells.has(idx)) return;                  // already painted this cell this stroke
+    state.strokeCells.add(idx);
+  }
+  const prev = state.selected;
+  const structural = applyTool(idx);
+  if (structural) { render(); return; }
+  if (prev != null && prev !== idx) refreshCell(prev);       // move selection highlight
+  refreshCell(idx);
+}
+
+function stopPaint() { state.painting = false; state.strokeCells = null; }
 
 // ---- File I/O --------------------------------------------------------------
 async function loadDng() {
@@ -203,10 +231,52 @@ async function saveMap() {
   }
 }
 
-// ---- Rendering -------------------------------------------------------------
+// ---- Cell rendering (incremental) ------------------------------------------
+let cellNodes = [];  // idx -> the .cell DOM node for the current level
+
+function cellClass(lv, idx) {
+  const t = lv.cells[idx];
+  const cls = ['cell'];
+  if (t === CELL.FLOOR) cls.push('cell-floor');
+  else if (t === CELL.WALL) cls.push('cell-wall');
+  else cls.push('cell-empty');
+  if (borderAt(lv, idx)) cls.push('cell-border');
+  if (state.selected === idx) cls.push('selected');
+  return cls.join(' ');
+}
+
+function fillCell(node, lv, idx) {
+  node.className = cellClass(lv, idx);
+  node.textContent = '';
+  const b = borderAt(lv, idx);
+  if (b) node.appendChild(el('div', 'border-tag', 'W' + b.id + (b.exit ? '\u2192' + b.exit : '')));
+  if (fountainAt(lv, idx) >= 0) node.appendChild(el('div', 'fountain-mark', '\u26F2'));
+}
+
+function refreshCell(idx) { const n = cellNodes[idx]; if (n) fillCell(n, curLevel(), idx); }
+
+// ---- Pointer interaction (event delegation on the grid) --------------------
+function onPointerDown(e) {
+  const c = e.target.closest('.cell');
+  if (!c) return;
+  e.preventDefault();
+  state.painting = true;
+  state.strokeCells = new Set();
+  paintAt(parseInt(c.dataset.idx, 10), false);
+}
+
+function onPointerOver(e) {
+  if (!state.painting) return;
+  const c = e.target.closest('.cell');
+  if (!c) return;
+  paintAt(parseInt(c.dataset.idx, 10), true);
+}
+
+// ---- Rendering (full rebuild; used on load/level/tool/border changes) -------
 function render() {
   const root = document.getElementById('root');
   root.innerHTML = '';
+  cellNodes = [];
 
   // Header
   const header = el('div', 'header');
@@ -248,26 +318,14 @@ function render() {
   const grid = el('div', 'grid');
   const lv = curLevel();
   for (let idx = 0; idx < GRID * GRID; idx++) {
-    const cellType = lv.cells[idx];
-    const cls = ['cell'];
-    if (cellType === CELL.FLOOR) cls.push('cell-floor');
-    else if (cellType === CELL.WALL) cls.push('cell-wall');
-    else cls.push('cell-empty');
-    if (state.selected === idx) cls.push('selected');
-    const c = el('div', cls.join(' '));
-
-    const b = borderAt(lv, idx);
-    if (b) {
-      c.classList.add('cell-border');
-      const tag = el('div', 'border-tag', 'W' + b.id + (b.exit ? '\u2192' + b.exit : ''));
-      c.appendChild(tag);
-    }
-    if (fountainAt(lv, idx) >= 0) c.appendChild(el('div', 'fountain-mark', '\u26F2'));
-
-    c.onmousedown = (e) => { e.preventDefault(); state.painting = true; applyTool(idx); };
-    c.onmouseenter = () => { if (state.painting) applyTool(idx); };
+    const c = document.createElement('div');
+    c.dataset.idx = idx;
+    fillCell(c, lv, idx);
+    cellNodes[idx] = c;
     grid.appendChild(c);
   }
+  grid.addEventListener('pointerdown', onPointerDown);
+  grid.addEventListener('pointerover', onPointerOver);
   canvas.appendChild(grid);
   main.appendChild(canvas);
   main.appendChild(el('div', 'status', state.status)).id = 'status';
@@ -321,7 +379,12 @@ function render() {
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function button(text, cls, onclick) { const b = el('button', cls, text); b.onclick = onclick; return b; }
 
-window.addEventListener('mouseup', () => { state.painting = false; });
+// Stop painting on release anywhere - including releases outside the grid or the
+// window - so the tool never keeps painting after the button is let go.
+window.addEventListener('pointerup', stopPaint);
+window.addEventListener('pointercancel', stopPaint);
+window.addEventListener('blur', stopPaint);
+
 window.addEventListener('DOMContentLoaded', render);
 // In case the script runs after DOMContentLoaded already fired:
 if (document.readyState !== 'loading') render();
