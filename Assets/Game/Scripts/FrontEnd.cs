@@ -729,6 +729,9 @@ public class FrontEnd : MonoBehaviour
             // Place authored fountains (from the map editor sidecar) into the world.
             DeceitLoader.PlaceFountains();
 
+            // Place authored decorative objects (furniture, shrines, boulders, etc.).
+            DeceitLoader.PlaceObjects();
+
             // Spawn the runtime mini-map overlay (bottom-left of screen).
             DeceitMinimap.Ensure();
 

@@ -38,6 +38,9 @@ public static class DeceitLoader
     // For up/down, targetLevel is a sidecar level index (0-based) and targetId is the
     // id of the destination stair on that level. For "exit" those fields are unused.
     [Serializable] public class DeceitStair { public int id, x, y; public string kind; public int targetLevel, targetId; }
+    // A decorative world object (fountain-style) placed in a cell. type == EObjectType value
+    // (== OBJECTS.GR sprite index). x,y are cell coordinates.
+    [Serializable] public class DeceitObject { public int type, x, y; }
     [Serializable] public class DeceitLevel
     {
         public int index, width, height;
@@ -46,8 +49,36 @@ public static class DeceitLoader
         public DeceitPoint[] fountains;    // cell coordinates
         public DeceitBorder[] wrapBorders; // seamless-wrap link markers (used in a later step)
         public DeceitStair[] stairs;       // staircases (up/down/exit) for inter-level travel
+        // ---- Per-cell texture overrides (sidecar version 3) ----
+        // wallTex/floorTex are row-major, length width*height, aligned to cells[].
+        //   wallTex[i]  = wallMat index 0..209 for wall cells, -1 = engine default wall.
+        //   floorTex[i] = floorMat index 0..51 for floor cells, -1 = gold/black checkerboard.
+        // ceilTex is level-wide and 1-BASED (floorMat index + 1); 0 = unset (keep default),
+        //   because JsonUtility reports an absent scalar as 0 and 0 is a valid floorMat index.
+        public int[] wallTex;
+        public int[] floorTex;
+        public int ceilTex;
+        public DeceitObject[] objects;     // decorative world objects (cell coordinates)
     }
     [Serializable] public class DeceitMap { public int version, tilesPerCell; public DeceitLevel[] levels; }
+
+    // ---- Deceit per-level texture palettes (consumed by LevelGeometry) --------------------
+    // The engine mesh has a fixed 48 wall + 10 floor material slots. In Deceit mode we pack
+    // the level's distinct chosen textures into those slots and point each tile's
+    // wall/floorTexture at the right slot. LevelGeometry reads these after BuildLevel runs.
+    //   WallPalette[slot]  = wallMat index for that wall slot  (slot 0 = default wall).
+    //   FloorPalette[slot] = floorMat index for that floor slot, or -1 = leave as-is.
+    //     floor slots 0/1 are the black/gold checkerboard (handled in LevelGeometry),
+    //     slots 2..8 are explicit floors, slot 9 is the ceiling (-1 = keep default ceiling).
+    public static int[] WallPalette;
+    public static int[] FloorPalette;
+    public static int WallPaletteOverflow;
+    public static int FloorPaletteOverflow;
+
+    public const int DefaultWallMat  = 0;   // wallMat index used for the default wall slot
+    public const int MaxWallSlots    = 48;  // wall submesh slots 0..47 (slot 0 = default)
+    public const int FirstFloorSlot  = 2;   // floor slots 2..8 hold explicit floor textures
+    public const int LastFloorSlot   = 8;   // (slots 0/1 = checkerboard, slot 9 = ceiling)
 
     private static DeceitMap sMap;
     private static bool sMapLoaded;
@@ -187,12 +218,73 @@ public static class DeceitLoader
         level.ResizeTiles(gw, gh);
         InitSolid(level, gw, gh);
 
+        // ---- Build the per-level texture palettes from the sidecar overrides ----------
+        // wallMat has 210 entries, floorMat has 52 (see LevelLoader.CreateWallAndFloorMaterials);
+        // we map the distinct chosen indices into the fixed 48 wall / 10 floor mesh slots.
+        int[] wallPal  = new int[MaxWallSlots];   // slot -> wallMat index (-1 = unused)
+        int[] floorPal = new int[10];             // slot -> floorMat index (-1 = leave as-is)
+        for (int s = 0; s < wallPal.Length;  s++) wallPal[s]  = -1;
+        for (int s = 0; s < floorPal.Length; s++) floorPal[s] = -1;
+        wallPal[0] = DefaultWallMat;              // slot 0 is always the default wall
+        int wallOverflow = 0, floorOverflow = 0;
+
+        var wallSlotMap = new System.Collections.Generic.Dictionary<int, int>();
+        int nextWallSlot = 1;                     // slots 1..47 for explicit walls
+        // Returns the wall slot for a wallMat index (0 = default/overflow).
+        System.Func<int, int> wallSlotFor = (mat) =>
+        {
+            if (mat < 0) return 0;                // -1 sentinel -> default wall
+            if (wallSlotMap.TryGetValue(mat, out int slot)) return slot;
+            if (nextWallSlot < MaxWallSlots)
+            {
+                slot = nextWallSlot++;
+                wallSlotMap[mat] = slot;
+                wallPal[slot] = mat;
+                return slot;
+            }
+            wallOverflow++;
+            return 0;                             // out of slots -> default wall
+        };
+
+        var floorSlotMap = new System.Collections.Generic.Dictionary<int, int>();
+        int nextFloorSlot = FirstFloorSlot;       // slots 2..8 for explicit floors
+        // Returns the floor slot for a floorMat index (-1 = keep checkerboard/overflow).
+        System.Func<int, int> floorSlotFor = (mat) =>
+        {
+            if (mat < 0) return -1;               // -1 sentinel -> checkerboard
+            if (floorSlotMap.TryGetValue(mat, out int slot)) return slot;
+            if (nextFloorSlot <= LastFloorSlot)
+            {
+                slot = nextFloorSlot++;
+                floorSlotMap[mat] = slot;
+                floorPal[slot] = mat;
+                return slot;
+            }
+            floorOverflow++;
+            return -1;                            // out of slots -> checkerboard
+        };
+
+        // Level-wide ceiling texture (slot 9). ceilTex is 1-based; 0 = keep engine default.
+        if (sc.ceilTex > 0)
+        {
+            int cm = sc.ceilTex - 1;
+            if (cm >= 0 && cm < 52) floorPal[9] = cm;
+        }
+
+        bool haveWallTex  = sc.wallTex  != null && sc.wallTex.Length  >= cw * ch;
+        bool haveFloorTex = sc.floorTex != null && sc.floorTex.Length >= cw * ch;
+
         for (int cy = 0; cy < ch; cy++)
         {
             for (int cx = 0; cx < cw; cx++)
             {
                 int code = sc.cells[cy * cw + cx];
                 bool isPassable = code == 1; // 0=empty, 1=floor, 2=wall — only floor is walkable
+
+                // Resolve this floor cell's explicit floor texture -> a uniform slot (or -1).
+                int floorSlot = -1;
+                if (isPassable && haveFloorTex)
+                    floorSlot = floorSlotFor(sc.floorTex[cy * cw + cx]);
 
                 int uxBase = cx * TilesPerCell;
                 // Flip N/S: sidecar row 0 is north (minimap top). +z is north in-world,
@@ -206,12 +298,75 @@ public static class DeceitLoader
                         t.type = isPassable ? 1 : 0;
                         if (isPassable)
                         {
-                            t.floorTexture = (dx + dy) % 2; // per-tile gold/black checkerboard
+                            t.floorTexture = (floorSlot >= 0)
+                                ? floorSlot            // uniform explicit floor
+                                : (dx + dy) % 2;       // gold/black checkerboard
                         }
                     }
                 }
             }
         }
+
+        // ---- Second pass: paint wall textures onto floor tiles facing textured wall cells ---
+        // A wall face is generated on the FLOOR tile adjacent to a higher (solid) neighbour and
+        // uses that floor tile's wallTexture. So for each floor cell we inspect its four
+        // neighbours; a neighbour that is a WALL cell (code 2) with an explicit texture paints
+        // the matching perimeter row/column of this cell's 11×11 block. N/S are painted first,
+        // then W/E, so corner tiles follow the West/East texture when two walls disagree.
+        if (haveWallTex)
+        {
+            for (int cy = 0; cy < ch; cy++)
+            {
+                for (int cx = 0; cx < cw; cx++)
+                {
+                    if (sc.cells[cy * cw + cx] != 1) continue; // only floor cells draw walls
+                    int uxBase = cx * TilesPerCell;
+                    int uyBase = (ch - 1 - cy) * TilesPerCell;
+
+                    int nMat = WallTexOfCell(sc, cx, cy - 1, cw, ch); // north neighbour
+                    int sMat = WallTexOfCell(sc, cx, cy + 1, cw, ch); // south neighbour
+                    int wMat = WallTexOfCell(sc, cx - 1, cy, cw, ch); // west neighbour
+                    int eMat = WallTexOfCell(sc, cx + 1, cy, cw, ch); // east neighbour
+
+                    // North neighbour -> top row of block (dy = TPC-1); South -> bottom (dy = 0).
+                    if (nMat >= 0)
+                    {
+                        int slot = wallSlotFor(nMat);
+                        for (int dx = 0; dx < TilesPerCell; dx++)
+                            level.tiles[uxBase + dx, uyBase + TilesPerCell - 1].wallTexture = slot;
+                    }
+                    if (sMat >= 0)
+                    {
+                        int slot = wallSlotFor(sMat);
+                        for (int dx = 0; dx < TilesPerCell; dx++)
+                            level.tiles[uxBase + dx, uyBase].wallTexture = slot;
+                    }
+                    // West neighbour -> left column (dx = 0); East -> right column (dx = TPC-1).
+                    if (wMat >= 0)
+                    {
+                        int slot = wallSlotFor(wMat);
+                        for (int dy = 0; dy < TilesPerCell; dy++)
+                            level.tiles[uxBase, uyBase + dy].wallTexture = slot;
+                    }
+                    if (eMat >= 0)
+                    {
+                        int slot = wallSlotFor(eMat);
+                        for (int dy = 0; dy < TilesPerCell; dy++)
+                            level.tiles[uxBase + TilesPerCell - 1, uyBase + dy].wallTexture = slot;
+                    }
+                }
+            }
+        }
+
+        // Publish palettes for LevelGeometry to overlay onto the mesh materials.
+        WallPalette  = wallPal;
+        FloorPalette = floorPal;
+        WallPaletteOverflow  = wallOverflow;
+        FloorPaletteOverflow = floorOverflow;
+        if (wallOverflow > 0)
+            Debug.LogWarning($"[DeceitLoader] Level {uwLevel}: {wallOverflow} distinct wall texture(s) exceeded the 47-slot limit and fell back to the default wall.");
+        if (floorOverflow > 0)
+            Debug.LogWarning($"[DeceitLoader] Level {uwLevel}: {floorOverflow} distinct floor texture(s) exceeded the 7-slot limit and fell back to the checkerboard.");
 
         // Prefer the spawn point painted in the map editor; fall back to a chosen floor cell.
         if (sc.spawn != null && sc.spawn.x >= 0 && sc.spawn.x < cw && sc.spawn.y >= 0 && sc.spawn.y < ch
@@ -249,6 +404,13 @@ public static class DeceitLoader
     /// <summary>Legacy path: builds the classic 8×8 U4 grid from DECEIT.DNG.</summary>
     private static void BuildFromDng(int uwLevel, Level level)
     {
+        // Legacy path has no per-cell texture data; clear any palette left by a sidecar level
+        // so LevelGeometry falls back to the plain gold/black checkerboard for this level.
+        WallPalette = null;
+        FloorPalette = null;
+        WallPaletteOverflow = 0;
+        FloorPaletteOverflow = 0;
+
         string dngPath = Path.Combine(Application.streamingAssetsPath, "DECEIT.DNG");
         if (!File.Exists(dngPath))
         {
@@ -299,6 +461,19 @@ public static class DeceitLoader
         SpawnCellY = 4 * TilesPerCell + TilesPerCell / 2;
 
         Debug.Log($"[DeceitLoader] Built level {uwLevel} from DECEIT.DNG ({GridSize}×{GridSize} tiles).");
+    }
+
+    /// <summary>
+    /// Returns the wallMat index authored for the cell at (cx,cy), or -1 when that cell is
+    /// out of bounds, is not an explicit wall cell (code 2), or has no texture override.
+    /// </summary>
+    private static int WallTexOfCell(DeceitLevel sc, int cx, int cy, int cw, int ch)
+    {
+        if (cx < 0 || cx >= cw || cy < 0 || cy >= ch) return -1;
+        int i = cy * cw + cx;
+        if (sc.cells[i] != 2) return -1;                    // only explicit wall cells carry a texture
+        if (sc.wallTex == null || i >= sc.wallTex.Length) return -1;
+        return sc.wallTex[i];                               // may be -1 (default wall)
     }
 
     /// <summary>Fills every tile of the level with a solid (type 0) wall tile.</summary>
@@ -391,5 +566,57 @@ public static class DeceitLoader
         }
 
         Debug.Log($"[DeceitLoader] Placed {placed} fountain(s) for level {deceitIndex + 1}.");
+    }
+
+    /// <summary>
+    /// Places the authored decorative world objects (from the sidecar's objects[]) at the
+    /// centre of their cells. Each object's type is an EObjectType value (== OBJECTS.GR sprite
+    /// index), so this covers fountains, cauldrons, shrines, furniture, boulders, etc.
+    /// Mirrors PlaceFountains' Create -> quality/quantity -> PostLoadInitialize -> position ->
+    /// AddToWorld path so it uses the same runtime object pipeline. Call from the same post-load
+    /// hook as PlaceFountains.
+    /// </summary>
+    public static void PlaceObjects()
+    {
+        if (LevelLoader.sLevelLoader == null) return;
+        int deceitIndex = LevelLoader.sLevelLoader.loadedLevel - 1;
+
+        DeceitLevel sc = GetSidecarLevel(deceitIndex);
+        if (sc == null || sc.objects == null || sc.objects.Length == 0)
+        {
+            return;
+        }
+
+        int placed = 0;
+        foreach (DeceitObject o in sc.objects)
+        {
+            if (o == null) continue;
+            if (o.x < 0 || o.x >= sc.width || o.y < 0 || o.y >= sc.height) continue;
+
+            int tx = o.x * TilesPerCell + TilesPerCell / 2;
+            int ty = (sc.height - 1 - o.y) * TilesPerCell + TilesPerCell / 2; // N/S flip
+            Tile t = LevelLoader.GetTile(tx, ty);
+
+            UUObject obj = LevelLoader.CreateObjectOfType((EObjectType)o.type);
+            if (obj == null)
+            {
+                Debug.LogWarning($"[DeceitLoader] PlaceObjects: could not create object type {o.type} at cell ({o.x},{o.y}).");
+                continue;
+            }
+
+            obj.quality = 1;
+            obj.quantity = 1;
+            obj.PostLoadInitialize();
+
+            Vector3 pos = (t != null)
+                ? t.GetCenter()
+                : new Vector3((tx + 0.5f) * LevelLoader.xzScale, 0.0f, (ty + 0.5f) * LevelLoader.xzScale);
+            obj.transform.position = pos;
+
+            LevelLoader.AddToWorld(obj);
+            placed++;
+        }
+
+        Debug.Log($"[DeceitLoader] Placed {placed} decorative object(s) for level {deceitIndex + 1}.");
     }
 }

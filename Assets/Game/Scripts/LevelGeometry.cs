@@ -219,6 +219,32 @@ public class LevelGeometry : LevelObject
 
         if (loader.deceitMode)
         {
+            // Overlay the map editor's per-level texture palettes (built in DeceitLoader) onto
+            // the fixed 48 wall / 10 floor material slots. Null palettes (legacy DECEIT.DNG
+            // levels) leave the plain checkerboard behaviour untouched.
+            int[] wallPal = DeceitLoader.WallPalette;
+            if (wallPal != null)
+            {
+                for (int s = 0; s < 48 && s < wallPal.Length; ++s)
+                {
+                    int mi = wallPal[s];
+                    if (mi >= 0 && mi < loader.wallMat.Length && loader.wallMat[mi] != null)
+                        mats[s] = loader.wallMat[mi];
+                }
+            }
+
+            int[] floorPal = DeceitLoader.FloorPalette;
+            if (floorPal != null)
+            {
+                // Explicit floor textures live in slots 2..8 (0/1 are the checkerboard).
+                for (int s = 2; s <= 8 && s < floorPal.Length; ++s)
+                {
+                    int mi = floorPal[s];
+                    if (mi >= 0 && mi < loader.floorMat.Length && loader.floorMat[mi] != null)
+                        mats[48 + s] = loader.floorMat[mi];
+                }
+            }
+
             // Slot 0 → pure black (even-sum U4 cells: (col+row)%2 == 0)
             mats[48 + 0] = loader.floorMat[26]; // floorMat[26] = Unlit/Color black (created in CreateWallAndFloorMaterials)
             // Slot 1 → gold (odd-sum U4 cells: (col+row)%2 == 1)
@@ -226,6 +252,15 @@ public class LevelGeometry : LevelObject
             goldMat.color = new Color(0.85f, 0.68f, 0.10f);
             goldMat.SetFloat("_Glossiness", 0.2f);
             mats[48 + 1] = goldMat;
+
+            // Slot 9 → ceiling. Override only when the editor authored a ceiling texture
+            // (floorPal[9] >= 0); otherwise keep the engine default already assigned above.
+            if (floorPal != null && floorPal.Length > 9)
+            {
+                int cm = floorPal[9];
+                if (cm >= 0 && cm < loader.floorMat.Length && loader.floorMat[cm] != null)
+                    mats[48 + 9] = loader.floorMat[cm];
+            }
         }
 
         meshRenderer.materials = mats;
