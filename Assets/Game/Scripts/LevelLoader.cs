@@ -62,6 +62,18 @@ public class ObservableLinkedList
 public class Level
 {
     public Tile[,] tiles = new Tile[64, 64];
+
+    // Grid dimensions. Default to the UW1 64x64 layout; Deceit mode resizes to 88x88.
+    public int Width = 64;
+    public int Height = 64;
+
+    public void ResizeTiles(int w, int h)
+    {
+        Width = w;
+        Height = h;
+        tiles = new Tile[w, h];
+    }
+
     public ushort[] walls = new ushort[48];
     public ushort[] floors = new ushort[10];
     public byte[] doors = new byte[6];
@@ -108,6 +120,10 @@ public class LevelLoader : MonoBehaviour
 
     // 1-indexed
     public int loadedLevel;
+
+    // When true, levels are built from the Ultima IV DECEIT.DNG file (88x88)
+    // instead of the UW1 64x64 lev.ark tile format.
+    public bool deceitMode = false;
 
     public double levelLoadedTime;
 
@@ -541,7 +557,10 @@ public class LevelLoader : MonoBehaviour
 
         levels[loadedLevel] = new Level();
 
-        ReadTiles();
+        if (deceitMode)
+            DeceitLoader.BuildLevel(loadedLevel, levels[loadedLevel]);
+        else
+            ReadTiles();
 
         movableTiles = FindMovableTiles();
 
@@ -766,9 +785,9 @@ public class LevelLoader : MonoBehaviour
     List<Tile> FindMovableTiles()
     {
         List<Tile> tiles = new List<Tile>();
-        for (int y = 0; y < 64; ++y)
+        for (int y = 0; y < levels[loadedLevel].Height; ++y)
         {
-            for (int x = 0; x < 64; ++x)
+            for (int x = 0; x < levels[loadedLevel].Width; ++x)
             {
                 Tile t = levels[loadedLevel].tiles[x, y];
                 int o = t.firstObject;
@@ -841,9 +860,9 @@ public class LevelLoader : MonoBehaviour
 
     void CarveOutHiddenTiles()
     {
-        for (int y = 0; y < 64; ++y)
+        for (int y = 0; y < levels[loadedLevel].Height; ++y)
         {
-            for (int x = 0; x < 64; ++x)
+            for (int x = 0; x < levels[loadedLevel].Width; ++x)
             {
                 Tile t = levels[loadedLevel].tiles[x, y];
                 int o = t.firstObject;
@@ -1006,9 +1025,9 @@ public class LevelLoader : MonoBehaviour
 
     private void CreateObjects()
     {
-        for (int y = 0; y < 64; ++y)
+        for (int y = 0; y < levels[loadedLevel].Height; ++y)
         {
-            for (int x = 0; x < 64; ++x)
+            for (int x = 0; x < levels[loadedLevel].Width; ++x)
             {
                 Tile t = levels[loadedLevel].tiles[x, y];
                 int o = t.firstObject;
@@ -1169,9 +1188,9 @@ public class LevelLoader : MonoBehaviour
         lavaLights.Clear();
 
         // Create new lava lights
-        for (int y = 0; y < 64; ++y)
+        for (int y = 0; y < levels[loadedLevel].Height; ++y)
         {
-            for (int x = 0; x < 64; ++x)
+            for (int x = 0; x < levels[loadedLevel].Width; ++x)
             {
                 Tile t = levels[loadedLevel].tiles[x, y];
                 if (t.type != 0)
@@ -1194,7 +1213,7 @@ public class LevelLoader : MonoBehaviour
 
     public void GetFloorHeights(int[] h, int x, int y, int dx, int dy, List<Tile> movableTiles)
     {
-        if (x < 0 || x > 63 || y < 0 || y > 63)
+        if (x < 0 || y < 0 || x >= GetLevel().Width || y >= GetLevel().Height)
         {
             h[0] = 16;
             h[1] = 16;
@@ -1311,10 +1330,11 @@ public class LevelLoader : MonoBehaviour
 
     public static Tile GetTile(int x, int y)
     {
-        if (x is >= 0 and < 64 && y is >= 0 and < 64 
+        if (x >= 0 && y >= 0
             && sLevelLoader != null
             && sLevelLoader.loadedLevel > 0
-            && GetLevel() != null)
+            && GetLevel() != null
+            && x < GetLevel().Width && y < GetLevel().Height)
         {
             return GetLevel().tiles[x, y];
         }
@@ -1323,11 +1343,13 @@ public class LevelLoader : MonoBehaviour
 
     public static Tile GetTile(int level, int x, int y)
     {
-        if (x is >= 0 and < 64 && y is >= 0 and < 64 
+        if (x >= 0 && y >= 0
             && sLevelLoader != null
             && level > 0
             && level < sLevelLoader.levels.Length
-            && sLevelLoader.levels[level] != null)
+            && sLevelLoader.levels[level] != null
+            && x < sLevelLoader.levels[level].Width
+            && y < sLevelLoader.levels[level].Height)
         {
             return sLevelLoader.levels[level].tiles[x, y];
         }
@@ -1341,8 +1363,8 @@ public class LevelLoader : MonoBehaviour
 
     public static Tile GetClosestTile(Vector3 pos)
     {
-        int x = Math.Clamp((int)(pos.x / xzScale), 0, 63);
-        int y = Math.Clamp((int)(pos.z / xzScale), 0, 63);
+        int x = Math.Clamp((int)(pos.x / xzScale), 0, GetLevel().Width - 1);
+        int y = Math.Clamp((int)(pos.z / xzScale), 0, GetLevel().Height - 1);
         
         // extend out until we find a non-zero tile
         List<Tile> candidates = new();
@@ -1361,8 +1383,8 @@ public class LevelLoader : MonoBehaviour
             int[] yo = { 0, -1, 0, 1 };
             for (int i = 0; i < 4; ++i)
             {
-                x = Math.Clamp(t.x + xo[i], 0, 63);
-                y = Math.Clamp(t.y + yo[i], 0, 63);
+                x = Math.Clamp(t.x + xo[i], 0, GetLevel().Width - 1);
+                y = Math.Clamp(t.y + yo[i], 0, GetLevel().Height - 1);
                 Tile n = GetTile(x, y);
                 if (!done.Contains(n))
                 {
@@ -1474,9 +1496,9 @@ public class LevelLoader : MonoBehaviour
         try
         {
             // Phase A: tile firstObject chains (sibling chainIndex only)
-            for (int y = 0; y < 64; ++y)
+            for (int y = 0; y < levels[level].Height; ++y)
             {
-                for (int x = 0; x < 64; ++x)
+                for (int x = 0; x < levels[level].Width; ++x)
                 {
                     int o = levels[level].tiles[x, y].firstObject;
                     while (o > 0)

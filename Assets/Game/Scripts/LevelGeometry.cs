@@ -226,9 +226,9 @@ public class LevelGeometry : LevelObject
         int[] h = new int[4];
         int[] nh = new int[4];
 
-        for (int y = 0; y < 64; ++y)
+        for (int y = 0; y < level.Height; ++y)
         {
-            for (int x = 0; x < 64; ++x)
+            for (int x = 0; x < level.Width; ++x)
             {
                 Tile t = level.tiles[x, y];
 
