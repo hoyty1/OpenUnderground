@@ -596,6 +596,32 @@ public class PlayerObject : MonoBehaviour
             float lookAheadTime = 0.05f;
             Vector3 center = transform.position;
             Vector3 forward = center + lookAheadTime * moveSpeed * cachedMoveDirection;
+
+            // Deceit wrap: the auto-jump gap check raycasts straight down at the look-ahead point.
+            // Near a looping edge that point sits BEYOND the real level, over the collider-free
+            // wrap ghosts, so the ray finds nothing and auto-jump mistakes the seam for a gap and
+            // fires an errant jump. The floor the player actually crosses onto is the opposite
+            // edge of the real geometry, so fold the sample point back into the real level bounds
+            // before the down-ray. On non-looping levels the border is walled, so the forward ray
+            // above already blocks and this reposition is never reached at an edge.
+            if (LevelLoader.sLevelLoader != null && LevelLoader.sLevelLoader.deceitMode)
+            {
+                Level level = LevelLoader.GetLevel();
+                if (level != null)
+                {
+                    float worldWidth = level.Width * LevelLoader.xzScale;
+                    float worldHeight = level.Height * LevelLoader.xzScale;
+                    if (worldWidth > 0f)
+                    {
+                        forward.x -= Mathf.Floor(forward.x / worldWidth) * worldWidth;
+                    }
+                    if (worldHeight > 0f)
+                    {
+                        forward.z -= Mathf.Floor(forward.z / worldHeight) * worldHeight;
+                    }
+                }
+            }
+
             int mask = LayerMasks.EnvironmentAndCeiling;
             if (!Physics.Raycast(center, cachedMoveDirection, lookAheadTime * moveSpeed, LayerMasks.EnvironmentOnly))
             {
@@ -827,15 +853,7 @@ public class PlayerObject : MonoBehaviour
 
                 if (wrapped)
                 {
-                    // Committing the loop-period reposition while the CharacterController is enabled
-                    // makes PhysX treat it as a one-frame swept move, which shows up as a hitch at the
-                    // seam even though the ghost geometry means the view is identical on either side.
-                    // Toggling the controller off around the write teleports cleanly with no sweep, so
-                    // the wrap is imperceptible.
-                    bool ccWasEnabled = cachedCharacterController != null && cachedCharacterController.enabled;
-                    if (ccWasEnabled) cachedCharacterController.enabled = false;
                     transform.position = pos;
-                    if (ccWasEnabled) cachedCharacterController.enabled = true;
                 }
             }
         }
@@ -1077,15 +1095,7 @@ public class PlayerObject : MonoBehaviour
 
                 if (wrapped)
                 {
-                    // Committing the loop-period reposition while the CharacterController is enabled
-                    // makes PhysX treat it as a one-frame swept move, which shows up as a hitch at the
-                    // seam even though the ghost geometry means the view is identical on either side.
-                    // Toggling the controller off around the write teleports cleanly with no sweep, so
-                    // the wrap is imperceptible.
-                    bool ccWasEnabled = cachedCharacterController != null && cachedCharacterController.enabled;
-                    if (ccWasEnabled) cachedCharacterController.enabled = false;
                     transform.position = pos;
-                    if (ccWasEnabled) cachedCharacterController.enabled = true;
                 }
             }
         }
