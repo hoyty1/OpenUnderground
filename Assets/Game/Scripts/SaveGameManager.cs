@@ -106,6 +106,15 @@ public class SaveGameManager : MonoBehaviour
 
     public void LoadGameFromSlot(string slotName)
     {
+        // Phase 1: Deceit mode rebuilds the map at 88x88, but saves store UW1 64x64
+        // state that is replayed over the grid (e.g. map-reveal indexing uses %64/64),
+        // which corrupts memory and hard-crashes the editor. Block loads while in
+        // Deceit mode; use New Game to enter Deceit.
+        if (LevelLoader.sLevelLoader != null && LevelLoader.sLevelLoader.deceitMode)
+        {
+            Debug.LogWarning("[SaveGameManager] Save/Load is not supported in Deceit mode (Phase 1). Aborting load to avoid a crash. Use New Game to enter Deceit.");
+            return;
+        }
         if (string.IsNullOrWhiteSpace(slotName))
         {
             Debug.LogError("Cannot load: slotName is empty");

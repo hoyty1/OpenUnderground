@@ -19,8 +19,9 @@ public static class DeceitLoader
     /// </summary>
     public static Vector3 SpawnPosition()
     {
-        // Center of tile (5,5): offset by 0.5 tiles, then scale
-        return new Vector3(5.5f * LevelLoader.xzScale, 0f, 5.5f * LevelLoader.xzScale);
+        // Center of tile (5,5): offset by 0.5 tiles, then scale.
+        // Small +Y offset so the player starts slightly above the floor plane.
+        return new Vector3(5.5f * LevelLoader.xzScale, 1.0f, 5.5f * LevelLoader.xzScale);
     }
 
     /// <summary>

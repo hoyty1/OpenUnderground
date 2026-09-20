@@ -103,9 +103,9 @@ public class FrontEnd : MonoBehaviour
     [System.NonSerialized] private Texture2D[] dropShadows;
     [System.NonSerialized] private Texture2D[] buttons;
 
-	private const int MAX_SAVE_SLOTS = 10;
-	private SaveGameManager.SaveSlotInfo[] saves = new SaveGameManager.SaveSlotInfo[MAX_SAVE_SLOTS];
-	private SaveGameManager.SaveSlotInfo[] actualSaves = new SaveGameManager.SaveSlotInfo[0];
+        private const int MAX_SAVE_SLOTS = 10;
+        private SaveGameManager.SaveSlotInfo[] saves = new SaveGameManager.SaveSlotInfo[MAX_SAVE_SLOTS];
+        private SaveGameManager.SaveSlotInfo[] actualSaves = new SaveGameManager.SaveSlotInfo[0];
     private Texture2D[] saveScreenshots = new Texture2D[MAX_SAVE_SLOTS];
     private string pendingLoadSlot;
     private bool hasSaves = false;
@@ -331,27 +331,27 @@ public class FrontEnd : MonoBehaviour
         revealAchievements = !revealAchievements;
     }
 
-	private void CheckSavesExist()
-	{
-		// Lightweight check: just see if any save files exist without unzipping them
-		try
-		{
-			string savesDirectoryPath = Application.persistentDataPath + "/Saves";
-			if (Directory.Exists(savesDirectoryPath))
-			{
-				string[] files = Directory.GetFiles(savesDirectoryPath, "*.json.gz");
-				hasSaves = files.Length > 0;
-			}
-			else
-			{
-				hasSaves = false;
-			}
-		}
-		catch
-		{
-			hasSaves = false;
-		}
-	}
+        private void CheckSavesExist()
+        {
+                // Lightweight check: just see if any save files exist without unzipping them
+                try
+                {
+                        string savesDirectoryPath = Application.persistentDataPath + "/Saves";
+                        if (Directory.Exists(savesDirectoryPath))
+                        {
+                                string[] files = Directory.GetFiles(savesDirectoryPath, "*.json.gz");
+                                hasSaves = files.Length > 0;
+                        }
+                        else
+                        {
+                                hasSaves = false;
+                        }
+                }
+                catch
+                {
+                        hasSaves = false;
+                }
+        }
 
     private void LoadScreenshotForSlot(int slotIndex, string slotName)
     {
@@ -360,17 +360,17 @@ public class FrontEnd : MonoBehaviour
         SaveUIHelper.LoadScreenshotForSlot(saveScreenshots, slotIndex, slotName);
     }
 
-	private void RefreshSaves()
-	{
+        private void RefreshSaves()
+        {
         // Use shared helper to populate save slot info and screenshots, and clamp menuIndex
         menuIndex = SaveUIHelper.RefreshSaves(saves, ref actualSaves, saveScreenshots, menuIndex);
 
-		// Ensure menuIndex is within valid range for the current menu
-		// Journey Onward is only available if there are actual saves (not empty slots)
-		int numItems = MenuItemCount();
-		if (menuIndex >= numItems) menuIndex = numItems - 1;
-		if (menuIndex < 0) menuIndex = 0;
-	}
+                // Ensure menuIndex is within valid range for the current menu
+                // Journey Onward is only available if there are actual saves (not empty slots)
+                int numItems = MenuItemCount();
+                if (menuIndex >= numItems) menuIndex = numItems - 1;
+                if (menuIndex < 0) menuIndex = 0;
+        }
 
     private void UpdateMenu()
     {
@@ -711,7 +711,19 @@ public class FrontEnd : MonoBehaviour
         
         // New game - explicitly load the starting level
         LevelLoader.sLevelLoader.LoadLevel(Cheats.sCheats.level);
-        
+
+        // Deceit mode: the hardcoded UW1 levelStarts land the player in a wall/void
+        // in the 88x88 Deceit map, so override the spawn to the guaranteed-open
+        // starting cell (U4 cell 0,0 -> UW tile 5,5) after tiles are built.
+        if (LevelLoader.sLevelLoader.deceitMode && PlayerObject.Player != null)
+        {
+            Tile startTile = LevelLoader.GetTile(5, 5);
+            Vector3 startPos = (startTile != null)
+                ? startTile.GetCenter() + Vector3.up
+                : DeceitLoader.SpawnPosition();
+            PlayerObject.Player.TeleportTo(startPos, PlayerObject.Player.transform.rotation);
+        }
+
         Destroy(gameObject);
     }
 
