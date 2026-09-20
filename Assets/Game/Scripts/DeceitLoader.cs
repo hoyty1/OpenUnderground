@@ -190,7 +190,9 @@ public static class DeceitLoader
                 bool isPassable = code == 1; // 0=empty, 1=floor, 2=wall — only floor is walkable
 
                 int uxBase = cx * TilesPerCell;
-                int uyBase = cy * TilesPerCell;
+                // Flip N/S: sidecar row 0 is north (minimap top). +z is north in-world,
+                // so build sidecar row cy at world row (ch-1-cy) to match compass/minimap.
+                int uyBase = (ch - 1 - cy) * TilesPerCell;
                 for (int dy = 0; dy < TilesPerCell; dy++)
                 {
                     for (int dx = 0; dx < TilesPerCell; dx++)
@@ -211,7 +213,7 @@ public static class DeceitLoader
             && sc.cells[sc.spawn.y * cw + sc.spawn.x] == 1)
         {
             SpawnCellX = sc.spawn.x * TilesPerCell + TilesPerCell / 2;
-            SpawnCellY = sc.spawn.y * TilesPerCell + TilesPerCell / 2;
+            SpawnCellY = (ch - 1 - sc.spawn.y) * TilesPerCell + TilesPerCell / 2; // N/S flip
             Debug.Log($"[DeceitLoader] Level {uwLevel} spawn set from editor paint at cell ({sc.spawn.x},{sc.spawn.y}).");
         }
         else
@@ -322,7 +324,7 @@ public static class DeceitLoader
             }
         }
         SpawnCellX = scx * TilesPerCell + TilesPerCell / 2;
-        SpawnCellY = scy * TilesPerCell + TilesPerCell / 2;
+        SpawnCellY = (ch - 1 - scy) * TilesPerCell + TilesPerCell / 2; // N/S flip
     }
 
     /// <summary>
@@ -347,7 +349,7 @@ public static class DeceitLoader
             if (f == null) continue;
 
             int tx = f.x * TilesPerCell + TilesPerCell / 2;
-            int ty = f.y * TilesPerCell + TilesPerCell / 2;
+            int ty = (sc.height - 1 - f.y) * TilesPerCell + TilesPerCell / 2; // N/S flip
             Tile t = LevelLoader.GetTile(tx, ty);
 
             UUObject fo = LevelLoader.CreateObjectOfType(EObjectType.Fountain);

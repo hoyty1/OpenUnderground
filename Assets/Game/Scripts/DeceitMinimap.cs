@@ -133,7 +133,10 @@ public class DeceitMinimap : MonoBehaviour
             Vector3 pos  = PlayerObject.Player.transform.position;
             float cellSz = DeceitLoader.TilesPerCell * LevelLoader.xzScale;
             cx = Mathf.Clamp(Mathf.FloorToInt(pos.x / cellSz), 0, _gridW - 1);
-            cz = Mathf.Clamp(Mathf.FloorToInt(pos.z / cellSz), 0, _gridH - 1);
+            int czWorld = Mathf.Clamp(Mathf.FloorToInt(pos.z / cellSz), 0, _gridH - 1);
+            // Sidecar levels build the world N/S-flipped (row 0 = north = high world z),
+            // so invert world row back to sidecar row for the marker. DNG levels are un-flipped.
+            cz = (_cells != null) ? (_gridH - 1 - czWorld) : czWorld;
         }
 
         if (levelChanged || cx != _lastCellX || cz != _lastCellZ)
