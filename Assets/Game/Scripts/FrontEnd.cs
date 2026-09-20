@@ -713,11 +713,12 @@ public class FrontEnd : MonoBehaviour
         LevelLoader.sLevelLoader.LoadLevel(Cheats.sCheats.level);
 
         // Deceit mode: the hardcoded UW1 levelStarts land the player in a wall/void
-        // in the 88x88 Deceit map, so override the spawn to the guaranteed-open
-        // starting cell (U4 cell 0,0 -> UW tile 5,5) after tiles are built.
+        // in the Deceit map, so override the spawn to the guaranteed-open starting cell
+        // (U4 cell 0,0 -> UW tile DeceitLoader.TilesPerCell/2, DeceitLoader.TilesPerCell/2).
         if (LevelLoader.sLevelLoader.deceitMode && PlayerObject.Player != null)
         {
-            Tile startTile = LevelLoader.GetTile(5, 5);
+            int spawnIdx = DeceitLoader.TilesPerCell / 2;
+            Tile startTile = LevelLoader.GetTile(spawnIdx, spawnIdx);
             Vector3 startPos = (startTile != null)
                 ? startTile.GetCenter() + Vector3.up
                 : DeceitLoader.SpawnPosition();

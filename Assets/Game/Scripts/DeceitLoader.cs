@@ -3,25 +3,26 @@ using UnityEngine;
 
 /// <summary>
 /// Builds a Level's tile grid from the Ultima IV DECEIT.DNG dungeon file.
-/// Phase 1: walkable geometry only. Each 8×8 U4 cell grid is expanded to
-/// an 88×88 UW tile grid (1 U4 cell = 11×11 UW tiles).
+/// Phase 1: walkable geometry only. Each 8×8 U4 cell grid is expanded to a
+/// (CellCount*TilesPerCell)² UW tile grid. Adjust TilesPerCell to tune corridor width.
 /// </summary>
 public static class DeceitLoader
 {
     private const int CellCount = 8;         // U4 grid is 8×8 cells
-    private const int TilesPerCell = 11;     // each cell = 11×11 UW tiles
-    private const int GridSize = CellCount * TilesPerCell; // = 88
+    public  const int TilesPerCell = 3;      // each cell = TilesPerCell×TilesPerCell UW tiles (tune for corridor width: 1=3m, 2=6m, 3=9m, 4=12m)
+    private const int GridSize = CellCount * TilesPerCell; // = 24 at TilesPerCell=3
 
     /// <summary>
     /// Returns the world-space spawn position for a given Deceit level.
     /// Level 1: cell (col=0, row=0) is always a PASSAGE (0xF0), so spawn
-    /// at the center of that cell's UW tile block: tile (5,5).
+    /// at the center of that cell's UW tile block: tile (TilesPerCell/2, TilesPerCell/2).
     /// </summary>
     public static Vector3 SpawnPosition()
     {
-        // Center of tile (5,5): offset by 0.5 tiles, then scale.
-        // Small +Y offset so the player starts slightly above the floor plane.
-        return new Vector3(5.5f * LevelLoader.xzScale, 1.0f, 5.5f * LevelLoader.xzScale);
+        // Center of the spawn tile inside cell (0,0): tile index = TilesPerCell/2 (int div),
+        // then add 0.5 to reach the tile's centre, then multiply by xzScale.
+        float centre = (TilesPerCell / 2 + 0.5f) * LevelLoader.xzScale;
+        return new Vector3(centre, 1.0f, centre);
     }
 
     /// <summary>
@@ -144,6 +145,6 @@ public static class DeceitLoader
             }
         }
 
-        Debug.Log($"[DeceitLoader] Built level {uwLevel} ({GridSize}×{GridSize} tiles).");
+        Debug.Log($"[DeceitLoader] Built level {uwLevel} ({GridSize}×{GridSize} tiles, TilesPerCell={TilesPerCell}).");
     }
 }

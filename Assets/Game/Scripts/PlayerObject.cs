@@ -111,10 +111,11 @@ public class PlayerObject : MonoBehaviour
 
     public void DebugJumpToLevelStart()
     {
-        // Deceit mode uses an 88x88 map; the UW1 levelStarts table is invalid there.
+        // Deceit mode uses a variable-size map; the UW1 levelStarts table is invalid there.
         if (LevelLoader.sLevelLoader.deceitMode)
         {
-            Tile startTile = LevelLoader.GetTile(5, 5);
+            int spawnIdx = DeceitLoader.TilesPerCell / 2;
+            Tile startTile = LevelLoader.GetTile(spawnIdx, spawnIdx);
             transform.position = (startTile != null)
                 ? startTile.GetCenter() + Vector3.up
                 : DeceitLoader.SpawnPosition();
