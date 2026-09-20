@@ -722,6 +722,9 @@ public class FrontEnd : MonoBehaviour
                 ? startTile.GetCenter() + Vector3.up
                 : DeceitLoader.SpawnPosition();
             PlayerObject.Player.TeleportTo(startPos, PlayerObject.Player.transform.rotation);
+
+            // Give the player a lit lantern + oil so they can see in the dark.
+            DeceitLoader.EquipStartingLantern();
         }
 
         Destroy(gameObject);

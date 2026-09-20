@@ -25,6 +25,58 @@ public static class DeceitLoader
     }
 
     /// <summary>
+    /// Equips the player with a full lit lantern (right shoulder) and three oil flasks
+    /// so they can see in Deceit's otherwise pitch-black dungeons.
+    /// Called once after the level is loaded and the player is spawned.
+    /// Uses the same CreateObjectOfType + Inventory.Add path as save restore, so the
+    /// existing light-decay / oil-refuelling / flickering systems all work normally.
+    /// </summary>
+    public static void EquipStartingLantern()
+    {
+        if (Inventory.sInv == null)
+        {
+            Debug.LogWarning("[DeceitLoader] EquipStartingLantern: Inventory not ready.");
+            return;
+        }
+
+        // Don't double-equip if a light source is already on a shoulder (e.g. from cheats).
+        if (Inventory.sInv.invSlotContents[(int)EInvSlot.RightShoulder] is LightSource
+            || Inventory.sInv.invSlotContents[(int)EInvSlot.LeftShoulder] is LightSource)
+        {
+            return;
+        }
+
+        // Create a full lantern and equip it to the right shoulder.
+        // Pattern mirrors SaveGameManager restore: Create -> set quality -> PostLoadInitialize
+        //   -> assign slot -> Equip() (which calls SetLit(true) when quality > 0).
+        UUObject lanternObj = LevelLoader.CreateObjectOfType(EObjectType.Lantern);
+        if (lanternObj == null)
+        {
+            Debug.LogWarning("[DeceitLoader] EquipStartingLantern: Failed to create Lantern.");
+        }
+        else
+        {
+            lanternObj.quality = 63; // max — full lantern
+            lanternObj.quantity = 1;
+            lanternObj.PostLoadInitialize();
+            Inventory.sInv.invSlotContents[(int)EInvSlot.RightShoulder] = lanternObj;
+            lanternObj.Equip(); // lights the lantern
+        }
+
+        // Create a stack of 3 oil flasks so the player can refuel.
+        UUObject oilObj = LevelLoader.CreateObjectOfType(EObjectType.OilFlask);
+        if (oilObj != null)
+        {
+            oilObj.quality = 63;
+            oilObj.quantity = 3;
+            oilObj.PostLoadInitialize();
+            Inventory.Add(oilObj);
+        }
+
+        Debug.Log("[DeceitLoader] Equipped starting lantern (full) + 3 oil flasks.");
+    }
+
+    /// <summary>
     /// Populates the given Level's tile grid with Deceit dungeon geometry.
     /// uwLevel is 1-based (matching loadedLevel in LevelLoader).
     /// </summary>
