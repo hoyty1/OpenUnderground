@@ -29,6 +29,16 @@ ipcMain.handle('dialog:openDng', async () => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('dialog:openMap', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Load DECEIT.map.json (arbitrary-size map)',
+    properties: ['openFile'],
+    filters: [{ name: 'Deceit map', extensions: ['json'] }]
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
 ipcMain.handle('dialog:saveDng', async () => {
   const result = await dialog.showSaveDialog({
     title: 'Save map (writes DECEIT.DNG + DECEIT.map.json)',

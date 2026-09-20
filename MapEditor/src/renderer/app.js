@@ -7,9 +7,13 @@ const path = require('path');
 const { ipcRenderer } = require('electron');
 
 // ---- Model constants -------------------------------------------------------
-const GRID = 8;              // 8x8 original U4 Deceit cells per level
 const LEVELS = 9;           // DECEIT.DNG holds 9 levels
-const TILES_PER_CELL = 11;  // each U4 cell -> 11x11 checkerboard floor tiles in the engine
+const TILES_PER_CELL = 11;  // each cell -> 11x11 checkerboard floor tiles in the engine
+const DEFAULT_W = 8;        // legacy Deceit level width
+const DEFAULT_H = 8;        // legacy Deceit level height
+const MIN_DIM = 2;
+const MAX_DIM = 128;        // arbitrary dimensions are allowed (gameplay > legacy format)
+function clampDim(n) { n = parseInt(n, 10); if (!Number.isFinite(n)) return DEFAULT_W; return Math.max(MIN_DIM, Math.min(MAX_DIM, n)); }
 
 const CELL = { EMPTY: 0, FLOOR: 1, WALL: 2 };
 const DIRS = ['N', 'E', 'S', 'W'];
@@ -35,15 +39,16 @@ const LEVEL_1_DEFAULT = [
 ];
 
 // ---- State -----------------------------------------------------------------
-function blankLevel() {
-  return { cells: new Array(GRID * GRID).fill(CELL.EMPTY), fountains: [], wrapBorders: [], nextBorderId: 1 };
+function blankLevel(w = DEFAULT_W, h = DEFAULT_H) {
+  w = clampDim(w); h = clampDim(h);
+  return { width: w, height: h, cells: new Array(w * h).fill(CELL.EMPTY), fountains: [], wrapBorders: [], nextBorderId: 1 };
 }
 
 function defaultLevels() {
   const lv = [];
   for (let i = 0; i < LEVELS; i++) lv.push(blankLevel());
   // Seed level 1 from the original Deceit layout so something shows immediately.
-  for (let i = 0; i < GRID * GRID; i++) {
+  for (let i = 0; i < DEFAULT_W * DEFAULT_H; i++) {
     lv[0].cells[i] = LEVEL_1_DEFAULT[i] !== 0x0 ? CELL.FLOOR : CELL.WALL;
   }
   return lv;
@@ -57,14 +62,14 @@ const state = {
   selected: null,    // selected cell index
   painting: false,   // true only while a pointer button is held down
   strokeCells: null, // Set of cells already painted in the current stroke (dedupe)
-  status: 'Level 1 pre-loaded from the original Deceit dungeon. Paint with the palette on the left.'
+  status: 'Level 1 pre-loaded from the original Deceit dungeon. Resize the grid to draw larger layouts; paint with the palette on the left.'
 };
 
 const TOOLS = [
   { id: 'floor',    label: 'Floor',        hint: 'Walkable 11x11 gold/black checkerboard cell (no walls). Hold and drag to paint.' },
   { id: 'wall',     label: 'Wall',         hint: 'Solid grey-brick wall cell. Hold and drag to trace non-square rooms.' },
   { id: 'fountain', label: 'Fountain',     hint: 'Click a cell to place/remove a fountain (original Underworld fountain). Sits on floor.' },
-  { id: 'wrap',     label: 'Wrap Border',  hint: 'Click an edge cell to mark a wrap border. Set a per-direction exit (N/E/S/W) on the right; at least one is required.' },
+  { id: 'wrap',     label: 'Wrap Border',  hint: 'Click an edge cell to mark a seamless wrap border. Set a per-direction exit (N/E/S/W) on the right; the corridor loops through that edge continuously. At least one direction is required.' },
   { id: 'erase',    label: 'Erase',        hint: 'Hold and drag to clear cells back to empty (floor/wall/fountain/border).' }
 ];
 
@@ -73,11 +78,35 @@ const POINT_TOOLS = { fountain: true, wrap: true };
 
 // ---- Helpers ---------------------------------------------------------------
 function curLevel() { return state.levels[state.level]; }
-function xy(idx) { return { x: idx % GRID, y: Math.floor(idx / GRID) }; }
+function xy(lv, idx) { return { x: idx % lv.width, y: Math.floor(idx / lv.width) }; }
+function idxOf(lv, x, y) { return y * lv.width + x; }
 function fountainAt(lv, idx) { return lv.fountains.indexOf(idx); }
 function borderAt(lv, idx) { return lv.wrapBorders.find(b => b.index === idx) || null; }
 
 function setStatus(msg) { state.status = msg; const el = document.getElementById('status'); if (el) el.textContent = msg; }
+
+// Resize a level, preserving the top-left overlap. Cells/fountains/borders that
+// fall outside the new bounds are dropped, and any links pointing at a dropped
+// border are cleared so the map stays consistent.
+function resizeLevel(lv, nw, nh) {
+  nw = clampDim(nw); nh = clampDim(nh);
+  const nc = new Array(nw * nh).fill(CELL.EMPTY);
+  const cw = Math.min(nw, lv.width), ch = Math.min(nh, lv.height);
+  for (let y = 0; y < ch; y++)
+    for (let x = 0; x < cw; x++)
+      nc[y * nw + x] = lv.cells[y * lv.width + x];
+  const nf = [];
+  lv.fountains.forEach(i => { const p = xy(lv, i); if (p.x < nw && p.y < nh) nf.push(p.y * nw + p.x); });
+  const removed = [];
+  const nb = [];
+  lv.wrapBorders.forEach(b => {
+    const p = xy(lv, b.index);
+    if (p.x < nw && p.y < nh) { b.index = p.y * nw + p.x; nb.push(b); }
+    else removed.push(b.id);
+  });
+  lv.width = nw; lv.height = nh; lv.cells = nc; lv.fountains = nf; lv.wrapBorders = nb;
+  removed.forEach(id => unlinkReferences(lv, id));
+}
 
 // ---- Painting --------------------------------------------------------------
 // Mutates the model for a single cell. Returns true when the change affects
@@ -147,66 +176,97 @@ function paintAt(idx, isDragEnter) {
 function stopPaint() { state.painting = false; state.strokeCells = null; }
 
 // ---- File I/O --------------------------------------------------------------
+// Build the full level list from a DECEIT.map.json sidecar object (authoritative:
+// carries arbitrary per-level dimensions, cells, fountains and directional borders).
+function buildLevelsFromSidecar(json) {
+  const src = Array.isArray(json.levels) ? json.levels : [];
+  const levels = [];
+  for (let i = 0; i < LEVELS; i++) {
+    const jl = src.find(l => l.index === i) || src[i];
+    if (jl && Array.isArray(jl.cells)) {
+      const w = clampDim(jl.width || DEFAULT_W), h = clampDim(jl.height || DEFAULT_H);
+      const lv = blankLevel(w, h);
+      for (let k = 0; k < Math.min(jl.cells.length, w * h); k++) lv.cells[k] = jl.cells[k];
+      (jl.fountains || []).forEach(f => lv.fountains.push(f.y * w + f.x));
+      let maxId = 0;
+      (jl.wrapBorders || []).forEach(b => {
+        let exits;
+        if (b.exits) { exits = emptyExits(); DIRS.forEach(d => { exits[d] = b.exits[d] ?? null; }); }
+        else if (b.exit != null) { exits = { N: b.exit, E: b.exit, S: b.exit, W: b.exit }; } // legacy single-exit
+        else { exits = emptyExits(); }
+        lv.wrapBorders.push({ id: b.id, index: b.y * w + b.x, exits });
+        if (b.id > maxId) maxId = b.id;
+      });
+      lv.nextBorderId = maxId + 1;
+      levels.push(lv);
+    } else {
+      levels.push(blankLevel());
+    }
+  }
+  return levels;
+}
+
 async function loadDng() {
   const p = await ipcRenderer.invoke('dialog:openDng');
   if (!p) return;
   try {
     const buf = fs.readFileSync(p);
     if (buf.length < LEVELS * 512) { alert('Invalid DECEIT.DNG: file too small.'); return; }
-    const levels = [];
+    // Legacy DNG is a fixed 8x8-per-level format.
+    let levels = [];
     for (let l = 0; l < LEVELS; l++) {
       const off = l * 512;
-      const lv = blankLevel();
-      for (let i = 0; i < GRID * GRID; i++) {
+      const lv = blankLevel(DEFAULT_W, DEFAULT_H);
+      for (let i = 0; i < DEFAULT_W * DEFAULT_H; i++) {
         const nibble = (buf[off + i] >> 4) & 0xF;
         lv.cells[i] = nibble !== 0x0 ? CELL.FLOOR : CELL.WALL;
       }
       levels.push(lv);
     }
-    // Merge a sidecar (fountains + wrap borders) if one sits next to the .DNG.
+    // A sidecar next to the .DNG is authoritative (arbitrary dims + fountains + borders).
     const dir = path.dirname(p);
     const sidecar = path.join(dir, 'DECEIT.map.json');
+    let usedSidecar = false;
     if (fs.existsSync(sidecar)) {
-      try {
-        const json = JSON.parse(fs.readFileSync(sidecar, 'utf8'));
-        if (Array.isArray(json.levels)) {
-          json.levels.forEach(jl => {
-            const li = jl.index;
-            if (li == null || !levels[li]) return;
-            (jl.fountains || []).forEach(f => levels[li].fountains.push(f.y * GRID + f.x));
-            let maxId = 0;
-            (jl.wrapBorders || []).forEach(b => {
-              // New format: b.exits {N,E,S,W}. Old format: single b.exit -> apply to all dirs.
-              let exits;
-              if (b.exits) { exits = emptyExits(); DIRS.forEach(d => { exits[d] = b.exits[d] ?? null; }); }
-              else if (b.exit != null) { exits = { N: b.exit, E: b.exit, S: b.exit, W: b.exit }; }
-              else { exits = emptyExits(); }
-              levels[li].wrapBorders.push({ id: b.id, index: b.y * GRID + b.x, exits });
-              if (b.id > maxId) maxId = b.id;
-            });
-            levels[li].nextBorderId = maxId + 1;
-          });
-        }
-      } catch (e) { console.warn('sidecar parse failed', e); }
+      try { levels = buildLevelsFromSidecar(JSON.parse(fs.readFileSync(sidecar, 'utf8'))); usedSidecar = true; }
+      catch (e) { console.warn('sidecar parse failed', e); }
     }
     state.levels = levels;
     state.loadedDir = dir;
     state.level = 0;
     state.selected = null;
-    setStatus('Loaded ' + path.basename(p) + (fs.existsSync(sidecar) ? ' + DECEIT.map.json' : '') + ' as starting point.');
+    setStatus('Loaded ' + path.basename(p) + (usedSidecar ? ' + DECEIT.map.json' : '') + ' as starting point.');
     render();
   } catch (e) {
     alert('Failed to read file: ' + e.message);
   }
 }
 
+async function loadMap() {
+  const p = await ipcRenderer.invoke('dialog:openMap');
+  if (!p) return;
+  try {
+    const json = JSON.parse(fs.readFileSync(p, 'utf8'));
+    state.levels = buildLevelsFromSidecar(json);
+    state.loadedDir = path.dirname(p);
+    state.level = 0;
+    state.selected = null;
+    setStatus('Loaded ' + path.basename(p) + ' (arbitrary-size map).');
+    render();
+  } catch (e) {
+    alert('Failed to read map: ' + e.message);
+  }
+}
+
+// Legacy 8x8 DNG buffer. Only written when every level is 8x8; larger maps are
+// carried by the sidecar (the engine reads DECEIT.map.json for those).
 function buildDngBuffer() {
   const buf = Buffer.alloc(LEVELS * 512);
   for (let l = 0; l < LEVELS; l++) {
     const off = l * 512;
-    for (let i = 0; i < GRID * GRID; i++) {
-      // FLOOR -> passable (0xF0); WALL/EMPTY -> solid (0x00). Engine reads (byte>>4)&0xF.
-      buf[off + i] = state.levels[l].cells[i] === CELL.FLOOR ? 0xF0 : 0x00;
+    const lv = state.levels[l];
+    for (let i = 0; i < DEFAULT_W * DEFAULT_H; i++) {
+      buf[off + i] = lv.cells[i] === CELL.FLOOR ? 0xF0 : 0x00;
     }
   }
   return buf;
@@ -214,16 +274,15 @@ function buildDngBuffer() {
 
 function buildSidecar() {
   return {
-    version: 1,
-    grid: GRID,
+    version: 2,
     tilesPerCell: TILES_PER_CELL,
     levels: state.levels.map((lv, index) => ({
       index,
-      width: GRID,
-      height: GRID,
+      width: lv.width,
+      height: lv.height,
       cells: lv.cells.slice(),                 // 0=empty 1=floor 2=wall (row-major)
-      fountains: lv.fountains.map(i => xy(i)),
-      wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } }))
+      fountains: lv.fountains.map(i => xy(lv, i)),
+      wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(lv, b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } }))
     }))
   };
 }
@@ -246,13 +305,21 @@ async function saveMap() {
   const p = await ipcRenderer.invoke('dialog:saveDng');
   if (!p) return;
   try {
-    fs.writeFileSync(p, buildDngBuffer());
     const dir = path.dirname(p);
     const sidecar = path.join(dir, 'DECEIT.map.json');
     fs.writeFileSync(sidecar, JSON.stringify(buildSidecar(), null, 2));
+
+    const allLegacy = state.levels.every(lv => lv.width === DEFAULT_W && lv.height === DEFAULT_H);
+    let dngNote;
+    if (allLegacy) {
+      fs.writeFileSync(p, buildDngBuffer());
+      dngNote = '\u2022 ' + p + '\n';
+    } else {
+      dngNote = '(legacy DECEIT.DNG skipped \u2014 map exceeds 8\u00D78; the engine reads DECEIT.map.json)\n';
+    }
     state.loadedDir = dir;
-    setStatus('Saved ' + path.basename(p) + ' + DECEIT.map.json to ' + dir);
-    alert('Saved:\n\u2022 ' + p + '\n\u2022 ' + sidecar + '\n\nCopy DECEIT.DNG into Assets/StreamingAssets/ for the engine.');
+    setStatus('Saved DECEIT.map.json' + (allLegacy ? ' + DECEIT.DNG' : ' (sidecar only, arbitrary size)') + ' to ' + dir);
+    alert('Saved:\n' + dngNote + '\u2022 ' + sidecar + '\n\nCopy these into Assets/StreamingAssets/ for the engine.');
   } catch (e) {
     alert('Failed to save: ' + e.message);
   }
@@ -260,6 +327,18 @@ async function saveMap() {
 
 // ---- Cell rendering (incremental) ------------------------------------------
 let cellNodes = [];  // idx -> the .cell DOM node for the current level
+let cellPx = 64;     // current cell size in px (scales with grid dimensions)
+
+function computeCellPx(lv) {
+  const maxDim = Math.max(lv.width, lv.height);
+  if (maxDim <= 8) return 64;
+  if (maxDim <= 12) return 46;
+  if (maxDim <= 18) return 34;
+  if (maxDim <= 26) return 24;
+  if (maxDim <= 40) return 16;
+  if (maxDim <= 64) return 11;
+  return 8;
+}
 
 function cellClass(lv, idx) {
   const t = lv.cells[idx];
@@ -274,15 +353,22 @@ function cellClass(lv, idx) {
 
 function fillCell(node, lv, idx) {
   node.className = cellClass(lv, idx);
+  node.style.width = cellPx + 'px';
+  node.style.height = cellPx + 'px';
   node.textContent = '';
   const b = borderAt(lv, idx);
   if (b) {
     const dirs = exitDirs(b);
     const tag = el('div', 'border-tag' + (dirs.length === 0 ? ' border-tag-warn' : ''),
       'W' + b.id + (dirs.length ? ' ' + dirs.join('') : ' !'));
+    if (cellPx < 24) tag.style.fontSize = '7px';
     node.appendChild(tag);
   }
-  if (fountainAt(lv, idx) >= 0) node.appendChild(el('div', 'fountain-mark', '\u26F2'));
+  if (fountainAt(lv, idx) >= 0) {
+    const fm = el('div', 'fountain-mark', '\u26F2');
+    fm.style.fontSize = Math.max(10, Math.round(cellPx * 0.5)) + 'px';
+    node.appendChild(fm);
+  }
 }
 
 function refreshCell(idx) { const n = cellNodes[idx]; if (n) fillCell(n, curLevel(), idx); }
@@ -315,6 +401,7 @@ function render() {
   header.appendChild(el('h1', null, 'Deceit Map Editor'));
   const hc = el('div', 'header-controls');
   hc.appendChild(button('Load DECEIT.DNG', 'btn', loadDng));
+  hc.appendChild(button('Load Map (.json)', 'btn', loadMap));
   hc.appendChild(button('Save Map', 'btn btn-primary', saveMap));
   header.appendChild(hc);
   root.appendChild(header);
@@ -337,7 +424,7 @@ function render() {
   });
   body.appendChild(palette);
 
-  // ---- Center: level tabs + grid
+  // ---- Center: level tabs + size bar + grid
   const main = el('div', 'main-area');
   const tabs = el('div', 'tabs');
   for (let i = 0; i < LEVELS; i++) {
@@ -346,10 +433,35 @@ function render() {
   }
   main.appendChild(tabs);
 
+  const lv = curLevel();
+
+  // Size bar (per-level resizable grid)
+  const sizebar = el('div', 'sizebar');
+  sizebar.appendChild(el('span', 'sizebar-label', 'Level ' + (state.level + 1) + ' size (cells):'));
+  const wIn = document.createElement('input');
+  wIn.type = 'number'; wIn.className = 'dim-input'; wIn.min = MIN_DIM; wIn.max = MAX_DIM; wIn.value = lv.width;
+  const hIn = document.createElement('input');
+  hIn.type = 'number'; hIn.className = 'dim-input'; hIn.min = MIN_DIM; hIn.max = MAX_DIM; hIn.value = lv.height;
+  sizebar.appendChild(wIn);
+  sizebar.appendChild(el('span', 'dim-x', '\u00D7'));
+  sizebar.appendChild(hIn);
+  sizebar.appendChild(button('Resize', 'btn btn-sm', () => {
+    const nw = clampDim(wIn.value), nh = clampDim(hIn.value);
+    resizeLevel(lv, nw, nh);
+    state.selected = null;
+    setStatus('Level ' + (state.level + 1) + ' resized to ' + nw + '\u00D7' + nh + ' (top-left content kept).');
+    render();
+  }));
+  sizebar.appendChild(el('span', 'sizebar-note', 'current ' + lv.width + '\u00D7' + lv.height + '  \u00B7  max ' + MAX_DIM + '\u00D7' + MAX_DIM));
+  main.appendChild(sizebar);
+
   const canvas = el('div', 'canvas');
   const grid = el('div', 'grid');
-  const lv = curLevel();
-  for (let idx = 0; idx < GRID * GRID; idx++) {
+  cellPx = computeCellPx(lv);
+  grid.style.gridTemplateColumns = 'repeat(' + lv.width + ', ' + cellPx + 'px)';
+  grid.style.gridTemplateRows = 'repeat(' + lv.height + ', ' + cellPx + 'px)';
+  const total = lv.width * lv.height;
+  for (let idx = 0; idx < total; idx++) {
     const c = document.createElement('div');
     c.dataset.idx = idx;
     fillCell(c, lv, idx);
@@ -367,10 +479,10 @@ function render() {
   const inspector = el('div', 'inspector');
   inspector.appendChild(el('h2', null, 'Wrap Borders \u2014 Level ' + (state.level + 1)));
   if (lv.wrapBorders.length === 0) {
-    inspector.appendChild(el('div', 'muted', 'No wrap borders yet. Pick the Wrap Border tool and click edge cells. Each border needs at least one directional exit \u2014 the player warps only when they leave the cell across that edge.'));
+    inspector.appendChild(el('div', 'muted', 'No wrap borders yet. Pick the Wrap Border tool and click edge cells. Each border needs at least one directional exit \u2014 the corridor wraps seamlessly when the player crosses that edge.'));
   } else {
     lv.wrapBorders.forEach(bd => {
-      const p = xy(bd.index);
+      const p = xy(lv, bd.index);
       const hasExit = exitDirs(bd).length > 0;
       const row = el('div', 'border-row' + (hasExit ? '' : ' border-row-warn'));
       row.appendChild(el('div', 'border-id', 'W' + bd.id + '  (' + p.x + ',' + p.y + ')'));
