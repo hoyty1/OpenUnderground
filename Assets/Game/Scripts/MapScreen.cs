@@ -170,9 +170,24 @@ public class MapPage
         }
     }
 
+    // Ensures the `mapped` array matches the current level's dimensions
+    // (64x64 for UW1, 88x88 for Deceit). Safe to call repeatedly.
+    private void EnsureMappedSized()
+    {
+        Level lvl = LevelLoader.GetLevel();
+        int w = lvl?.Width ?? 64;
+        int h = lvl?.Height ?? 64;
+        if (mapped == null || mapped.Length != w * h)
+        {
+            mapped = new bool[w * h];
+        }
+        mappedWidth = w;
+    }
+
     public void RewriteTile(Tile t)
     {
-        if (!mapped[64 * t.y + t.x])
+        EnsureMappedSized();
+        if (!mapped[mappedWidth * t.y + t.x])
         {
             return;
         }
@@ -188,6 +203,14 @@ public class MapPage
     {
         int x = t.x;
         int y = t.y;
+
+        // Guard: the parchment `col` buffer is fixed 320x200. Skip tiles that would
+        // draw outside it (Deceit rows beyond ~63) to avoid out-of-bounds writes.
+        // TODO(Deceit): enlarge the parchment for full 88x88 minimap coverage.
+        if (x < 0 || y < 0 || x > 93 || y > 63)
+        {
+            return;
+        }
 
         Color fs = floor;
 
@@ -326,15 +349,23 @@ public class MapPage
 
     public void Update(bool debugRevealMap)
     {
+        EnsureMappedSized();
+
         // update the map as we go
         int tileX = Tile.GetTileX(PlayerObject.Player.transform.position.x);
         int tileY = Tile.GetTileY(PlayerObject.Player.transform.position.z);
         Tile pt = LevelLoader.GetTile(tileX, tileY);
 
-        int radius = debugRevealMap ? 63 : 1;
-        for (int x = Mathf.Max(0, tileX - radius); x <= Mathf.Min(tileX + radius, 63); ++x)
+        // The automap parchment is a fixed 320x200 buffer that only fits ~64 tile
+        // rows and ~95 tile columns. Clamp minimap reveal to that drawable region so
+        // 88x88 Deceit levels don't write out of the parchment. UW1 (64x64) is unaffected.
+        // TODO(Deceit): resize/replace the parchment to show the full 88x88 minimap.
+        int maxX = Mathf.Min((LevelLoader.GetLevel()?.Width ?? 64) - 1, 93);
+        int maxY = Mathf.Min((LevelLoader.GetLevel()?.Height ?? 64) - 1, 63);
+        int radius = debugRevealMap ? Mathf.Max(maxX, maxY) : 1;
+        for (int x = Mathf.Max(0, tileX - radius); x <= Mathf.Min(tileX + radius, maxX); ++x)
         {
-            for (int y = Mathf.Max(0, tileY - radius); y <= Mathf.Min(tileY + radius, 63); ++y)
+            for (int y = Mathf.Max(0, tileY - radius); y <= Mathf.Min(tileY + radius, maxY); ++y)
             {
                 Tile t = LevelLoader.GetTile(x, y);
 
@@ -370,9 +401,9 @@ public class MapPage
                     }
                 }
 
-                if (!mapped[64 * y + x])
+                if (!mapped[mappedWidth * y + x])
                 {
-                    mapped[64 * y + x] = true;
+                    mapped[mappedWidth * y + x] = true;
                     if (t.type != 0)
                     {
                         PlayerObject.AddXP(1);
@@ -396,6 +427,10 @@ public class MapPage
     public Texture2D bg;
     internal Color[] col; // Internal: accessible within assembly but not exposed to Unity Inspector
     
+    // Width used to index the flat `mapped` array (level Width; 64 for UW1, 88 for Deceit).
+    // Kept in sync by EnsureMappedSized().
+    private int mappedWidth = 64;
+
     public bool[] mapped = new bool[64 * 64];
 
     public List<MapNote> notes = new List<MapNote>();
@@ -1055,7 +1090,8 @@ public class MapScreen : MonoBehaviour
                 // Restore mapped array from RLE (only for levels 1-8)
                 if (!string.IsNullOrEmpty(pageData.mappedRLE) && mapPages[i].mapped != null)
                 {
-                    mapPages[i].mapped = MapSaveData.DecodeMappedFromRLE(pageData.mappedRLE, 64 * 64);
+                    // TODO(Deceit): saved maps are UW1 64x64; Deceit (88x88) save/load is Phase 2.
+                    mapPages[i].mapped = MapSaveData.DecodeMappedFromRLE(pageData.mappedRLE, mapPages[i].mapped.Length);
                     
                     // Only update tiles if the level is already loaded
                     // We don't want to load all levels just for map data - they'll be loaded when needed
@@ -1076,8 +1112,9 @@ public class MapScreen : MonoBehaviour
                         {
                             if (mapPages[i].mapped[tileIdx])
                             {
-                                int x = tileIdx % 64;
-                                int y = tileIdx / 64;
+                                int lvlW = LevelLoader.sLevelLoader.levels[i].Width;
+                                int x = tileIdx % lvlW;
+                                int y = tileIdx / lvlW;
                                 Tile t = LevelLoader.sLevelLoader.levels[i].tiles[x, y];
                                 if (t != null)
                                 {
