@@ -77,9 +77,9 @@ public class DeceitMinimap : MonoBehaviour
         Image bg = bgGo.AddComponent<Image>();
         bg.color = new Color(0f, 0f, 0f, 0.6f);
         RectTransform bgRt = bgGo.GetComponent<RectTransform>();
-        bgRt.anchorMin        = bgRt.anchorMax = Vector2.zero; // bottom-left anchor
-        bgRt.pivot            = Vector2.zero;
-        bgRt.anchoredPosition = new Vector2(10f, 10f);
+        bgRt.anchorMin        = bgRt.anchorMax = new Vector2(0f, 1f); // top-left anchor
+        bgRt.pivot            = new Vector2(0f, 1f);
+        bgRt.anchoredPosition = new Vector2(10f, -10f);              // 10px in from left/top
         bgRt.sizeDelta        = new Vector2(panelSize, panelSize);
 
         // Map texture image centred inside the panel

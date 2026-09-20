@@ -9,10 +9,10 @@ using UnityEngine;
 public static class DeceitLoader
 {
     private const int CellCount = 8;         // U4 grid is 8×8 cells
-    public  const int TilesPerCell = 1;      // UW tiles per U4 cell (1 = 3 m corridors; raise for wider corridors)
+    public  const int TilesPerCell = 11;     // UW tiles per U4 cell — each original Deceit square = 11×11 floor tiles (matches game scale)
     public  const int SpawnCellX   = 4;      // U4 cell column for player spawn (Region 1, connected to main dungeon)
     public  const int SpawnCellY   = 4;      // U4 cell row    for player spawn (Region 1, connected to main dungeon)
-    private const int GridSize = CellCount * TilesPerCell; // = 8 at TilesPerCell=1
+    private const int GridSize = CellCount * TilesPerCell; // = 88 at TilesPerCell=11
 
     /// <summary>
     /// Returns the world-space spawn position (fallback when GetTile is unavailable).

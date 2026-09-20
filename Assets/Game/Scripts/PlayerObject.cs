@@ -610,6 +610,13 @@ public class PlayerObject : MonoBehaviour
 
     private bool TouchingTerrain(ETerrainType terrainType, Tile t)
     {
+        // Player can be over an out-of-bounds coordinate (e.g. wrap edges / off-map),
+        // in which case GetTile returns null. Treat that as "not touching terrain".
+        if (t == null)
+        {
+            return false;
+        }
+
         // need to be close so not standing on a bridge
         // falling
         // touching a mostly upward facing floor
