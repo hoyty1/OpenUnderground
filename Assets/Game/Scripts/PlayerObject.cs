@@ -791,6 +791,47 @@ public class PlayerObject : MonoBehaviour
         
         cachedCharacterController.Move(cachedMoveDirection * (moveSpeed * Time.deltaTime) + (Time.deltaTime * yVelocity) * Vector3.up);
 
+        // Deceit map wrap-around: teleport player across edges (torus topology).
+        // When the player crosses a grid boundary, wrap them to the opposite edge.
+        if (LevelLoader.sLevelLoader != null && LevelLoader.sLevelLoader.deceitMode)
+        {
+            Level level = LevelLoader.GetLevel();
+            if (level != null)
+            {
+                float worldWidth = level.Width * LevelLoader.xzScale;
+                float worldHeight = level.Height * LevelLoader.xzScale;
+                Vector3 pos = transform.position;
+                bool wrapped = false;
+
+                if (pos.x < 0f)
+                {
+                    pos.x += worldWidth;
+                    wrapped = true;
+                }
+                else if (pos.x >= worldWidth)
+                {
+                    pos.x -= worldWidth;
+                    wrapped = true;
+                }
+
+                if (pos.z < 0f)
+                {
+                    pos.z += worldHeight;
+                    wrapped = true;
+                }
+                else if (pos.z >= worldHeight)
+                {
+                    pos.z -= worldHeight;
+                    wrapped = true;
+                }
+
+                if (wrapped)
+                {
+                    transform.position = pos;
+                }
+            }
+        }
+
         Tile t = LevelLoader.GetTile((int)(transform.position.x / Tile.xzScale),
             (int)(transform.position.z / Tile.xzScale));
         
@@ -992,6 +1033,46 @@ public class PlayerObject : MonoBehaviour
         flightVelocity += flightBobScale * Mathf.Sign(Mathf.Sin(flightBobTime)) * Vector3.up;
 
         cachedCharacterController.Move(flightVelocity * (groundSpeed * Time.deltaTime));
+
+        // Deceit map wrap-around during flight (same torus logic as ground movement).
+        if (LevelLoader.sLevelLoader != null && LevelLoader.sLevelLoader.deceitMode)
+        {
+            Level level = LevelLoader.GetLevel();
+            if (level != null)
+            {
+                float worldWidth = level.Width * LevelLoader.xzScale;
+                float worldHeight = level.Height * LevelLoader.xzScale;
+                Vector3 pos = transform.position;
+                bool wrapped = false;
+
+                if (pos.x < 0f)
+                {
+                    pos.x += worldWidth;
+                    wrapped = true;
+                }
+                else if (pos.x >= worldWidth)
+                {
+                    pos.x -= worldWidth;
+                    wrapped = true;
+                }
+
+                if (pos.z < 0f)
+                {
+                    pos.z += worldHeight;
+                    wrapped = true;
+                }
+                else if (pos.z >= worldHeight)
+                {
+                    pos.z -= worldHeight;
+                    wrapped = true;
+                }
+
+                if (wrapped)
+                {
+                    transform.position = pos;
+                }
+            }
+        }
 
         cachedMoveDirection = flightVelocity;
     }
