@@ -1215,11 +1215,23 @@ public class LevelLoader : MonoBehaviour
     {
         if (x < 0 || y < 0 || x >= GetLevel().Width || y >= GetLevel().Height)
         {
-            h[0] = 16;
-            h[1] = 16;
-            h[2] = 16;
-            h[3] = 16;
-            return;
+            if (deceitMode)
+            {
+                // Deceit map wraps: treat out-of-bounds as the opposite edge.
+                int w = GetLevel().Width;
+                int ht = GetLevel().Height;
+                x = ((x % w) + w) % w;
+                y = ((y % ht) + ht) % ht;
+                // fall through to the normal tile lookup below
+            }
+            else
+            {
+                h[0] = 16;
+                h[1] = 16;
+                h[2] = 16;
+                h[3] = 16;
+                return;
+            }
         }
 
         Tile t = levels[loadedLevel].tiles[x, y];

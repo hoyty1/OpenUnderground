@@ -9,20 +9,22 @@ using UnityEngine;
 public static class DeceitLoader
 {
     private const int CellCount = 8;         // U4 grid is 8×8 cells
-    public  const int TilesPerCell = 3;      // each cell = TilesPerCell×TilesPerCell UW tiles (tune for corridor width: 1=3m, 2=6m, 3=9m, 4=12m)
-    private const int GridSize = CellCount * TilesPerCell; // = 24 at TilesPerCell=3
+    public  const int TilesPerCell = 1;      // UW tiles per U4 cell (1 = 3 m corridors; raise for wider corridors)
+    public  const int SpawnCellX   = 4;      // U4 cell column for player spawn (Region 1, connected to main dungeon)
+    public  const int SpawnCellY   = 4;      // U4 cell row    for player spawn (Region 1, connected to main dungeon)
+    private const int GridSize = CellCount * TilesPerCell; // = 8 at TilesPerCell=1
 
     /// <summary>
-    /// Returns the world-space spawn position for a given Deceit level.
-    /// Level 1: cell (col=0, row=0) is always a PASSAGE (0xF0), so spawn
-    /// at the center of that cell's UW tile block: tile (TilesPerCell/2, TilesPerCell/2).
+    /// Returns the world-space spawn position (fallback when GetTile is unavailable).
+    /// Spawn cell is (SpawnCellX, SpawnCellY) in the U4 8×8 grid (Region 1, main dungeon).
+    /// Each cell is TilesPerCell UW tiles wide; each UW tile is LevelLoader.xzScale metres.
     /// </summary>
     public static Vector3 SpawnPosition()
     {
-        // Center of the spawn tile inside cell (0,0): tile index = TilesPerCell/2 (int div),
-        // then add 0.5 to reach the tile's centre, then multiply by xzScale.
-        float centre = (TilesPerCell / 2 + 0.5f) * LevelLoader.xzScale;
-        return new Vector3(centre, 1.0f, centre);
+        float cellScale = TilesPerCell * LevelLoader.xzScale; // world-space width of one U4 cell
+        float cx = SpawnCellX * cellScale + cellScale * 0.5f;
+        float cz = SpawnCellY * cellScale + cellScale * 0.5f;
+        return new Vector3(cx, 1.0f, cz);
     }
 
     /// <summary>
@@ -102,7 +104,7 @@ public static class DeceitLoader
             return;
         }
 
-        // Resize the level to 88×88
+        // Resize the level to GridSize×GridSize UW tiles (= 8×8 when TilesPerCell=1)
         level.ResizeTiles(GridSize, GridSize);
 
         // Initialize all tiles as solid walls
@@ -122,7 +124,7 @@ public static class DeceitLoader
             }
         }
 
-        // Expand each U4 8×8 cell to 11×11 UW tiles
+        // Expand each U4 8×8 cell into TilesPerCell×TilesPerCell UW tiles
         for (int row = 0; row < CellCount; row++)
         {
             for (int col = 0; col < CellCount; col++)
@@ -140,6 +142,12 @@ public static class DeceitLoader
                     {
                         Tile t = level.tiles[uxBase + dx, uyBase + dy];
                         t.type = isPassable ? 1 : 0;
+                        if (isPassable)
+                        {
+                            // Checkerboard by U4 cell: slot 0 = black, slot 1 = gold.
+                            // LevelGeometry overrides mats[48] and mats[49] in deceit mode.
+                            t.floorTexture = (col + row) % 2;
+                        }
                     }
                 }
             }

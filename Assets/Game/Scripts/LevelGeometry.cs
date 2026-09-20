@@ -213,6 +213,17 @@ public class LevelGeometry : LevelObject
             mats[48 + 4] = LevelLoader.sLevelLoader.mazePathMaterial = mazePathMaterial;
         }
 
+        if (loader.deceitMode)
+        {
+            // Slot 0 → pure black (even-sum U4 cells: (col+row)%2 == 0)
+            mats[48 + 0] = loader.floorMat[26]; // floorMat[26] = Unlit/Color black (created in CreateWallAndFloorMaterials)
+            // Slot 1 → gold (odd-sum U4 cells: (col+row)%2 == 1)
+            Material goldMat = new Material(Shader.Find("Standard"));
+            goldMat.color = new Color(0.85f, 0.68f, 0.10f);
+            goldMat.SetFloat("_Glossiness", 0.2f);
+            mats[48 + 1] = goldMat;
+        }
+
         meshRenderer.materials = mats;
         meshRenderer.lightProbeUsage = 0;
         meshRenderer.shadowCastingMode = ShadowCastingMode.Off;

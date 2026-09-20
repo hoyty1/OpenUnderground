@@ -112,10 +112,10 @@ public class PlayerObject : MonoBehaviour
     public void DebugJumpToLevelStart()
     {
         // Deceit mode uses a variable-size map; the UW1 levelStarts table is invalid there.
+        // Spawn at Region 1 (SpawnCellX, SpawnCellY) — the main connected dungeon area.
         if (LevelLoader.sLevelLoader.deceitMode)
         {
-            int spawnIdx = DeceitLoader.TilesPerCell / 2;
-            Tile startTile = LevelLoader.GetTile(spawnIdx, spawnIdx);
+            Tile startTile = LevelLoader.GetTile(DeceitLoader.SpawnCellX, DeceitLoader.SpawnCellY);
             transform.position = (startTile != null)
                 ? startTile.GetCenter() + Vector3.up
                 : DeceitLoader.SpawnPosition();

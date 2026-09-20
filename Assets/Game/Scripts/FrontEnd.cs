@@ -713,12 +713,11 @@ public class FrontEnd : MonoBehaviour
         LevelLoader.sLevelLoader.LoadLevel(Cheats.sCheats.level);
 
         // Deceit mode: the hardcoded UW1 levelStarts land the player in a wall/void
-        // in the Deceit map, so override the spawn to the guaranteed-open starting cell
-        // (U4 cell 0,0 -> UW tile DeceitLoader.TilesPerCell/2, DeceitLoader.TilesPerCell/2).
+        // in the Deceit map, so override the spawn to Region 1 (SpawnCellX, SpawnCellY),
+        // which is connected to the main dungeon.
         if (LevelLoader.sLevelLoader.deceitMode && PlayerObject.Player != null)
         {
-            int spawnIdx = DeceitLoader.TilesPerCell / 2;
-            Tile startTile = LevelLoader.GetTile(spawnIdx, spawnIdx);
+            Tile startTile = LevelLoader.GetTile(DeceitLoader.SpawnCellX, DeceitLoader.SpawnCellY);
             Vector3 startPos = (startTile != null)
                 ? startTile.GetCenter() + Vector3.up
                 : DeceitLoader.SpawnPosition();
@@ -726,6 +725,9 @@ public class FrontEnd : MonoBehaviour
 
             // Give the player a lit lantern + oil so they can see in the dark.
             DeceitLoader.EquipStartingLantern();
+
+            // Spawn the runtime mini-map overlay (bottom-left of screen).
+            DeceitMinimap.Ensure();
         }
 
         Destroy(gameObject);
