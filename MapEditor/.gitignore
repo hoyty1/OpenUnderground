@@ -1,4 +1,5 @@
 node_modules/
-dist/
+dist/*
+!dist/*.zip
 *.log
 .DS_Store

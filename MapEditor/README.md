@@ -12,14 +12,21 @@ Visual editor for Ultima IV Deceit dungeon levels (`DECEIT.DNG` format) for use 
 - **Binary I/O**: Import/export DECEIT.DNG files (preserves metadata beyond first 64 bytes)
 - **Keyboard Shortcuts**: W/P/D/U/L/S for instant cell type assignment, arrows for navigation
 
-## Installation
+## Quick Start (Windows)
+
+Download the pre-built Windows executable:
+- `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.0.0.zip`
+- Extract the ZIP
+- Run `Deceit Map Editor.exe`
+
+## Development Setup
 
 ```bash
 cd MapEditor
 npm install
 ```
 
-## Running
+## Running from Source
 
 ```bash
 npm start
@@ -27,6 +34,11 @@ npm start
 
 ## Building Standalone Executable
 
+**Note:** Building Windows executables from Linux requires Wine, which may not be available in all environments.
+
+The repository includes a pre-built Windows portable package in `dist/DeceitMapEditor-Windows-x64-v1.0.0.zip`.
+
+To build from source on Windows:
 ```bash
 npm run build
 ```

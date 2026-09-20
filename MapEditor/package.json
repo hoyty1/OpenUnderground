@@ -7,12 +7,18 @@
     "start": "electron .",
     "build": "electron-builder"
   },
-  "keywords": ["ultima", "underworld", "map", "editor"],
+  "keywords": [
+    "ultima",
+    "underworld",
+    "map",
+    "editor"
+  ],
   "author": "hoyty1",
   "license": "MIT",
   "devDependencies": {
     "electron": "^28.0.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "electron-packager": "^17.1.2"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -29,7 +35,12 @@
       "package.json"
     ],
     "win": {
-      "target": "portable"
+      "target": {
+        "target": "portable",
+        "arch": [
+          "x64"
+        ]
+      }
     },
     "mac": {
       "target": "dmg"
