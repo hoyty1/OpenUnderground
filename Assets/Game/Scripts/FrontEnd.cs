@@ -734,6 +734,9 @@ public class FrontEnd : MonoBehaviour
 
             // Drive authored staircases (up/down/exit) for inter-level travel.
             DeceitStairManager.Ensure();
+
+            // Render seamless wrap ghosts so looping edges have no visible seam/teleport.
+            DeceitWrapVisualizer.Ensure();
         }
 
         Destroy(gameObject);
