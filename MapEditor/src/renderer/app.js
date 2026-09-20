@@ -12,6 +12,14 @@ const LEVELS = 9;           // DECEIT.DNG holds 9 levels
 const TILES_PER_CELL = 11;  // each U4 cell -> 11x11 checkerboard floor tiles in the engine
 
 const CELL = { EMPTY: 0, FLOOR: 1, WALL: 2 };
+const DIRS = ['N', 'E', 'S', 'W'];
+const DIR_LABEL = { N: 'North', E: 'East', S: 'South', W: 'West' };
+function emptyExits() { return { N: null, E: null, S: null, W: null }; }
+function exitDirs(b) { return DIRS.filter(d => b.exits && b.exits[d] != null); }
+// Remove every directional reference (on any border) that points at border id `gone`.
+function unlinkReferences(lv, gone) {
+  lv.wrapBorders.forEach(b => DIRS.forEach(d => { if (b.exits[d] === gone) b.exits[d] = null; }));
+}
 
 // Level 1 of the original Deceit dungeon (high nibble of each DECEIT.DNG byte).
 // Used so the editor shows a real map on first launch without opening a file.
@@ -56,7 +64,7 @@ const TOOLS = [
   { id: 'floor',    label: 'Floor',        hint: 'Walkable 11x11 gold/black checkerboard cell (no walls). Hold and drag to paint.' },
   { id: 'wall',     label: 'Wall',         hint: 'Solid grey-brick wall cell. Hold and drag to trace non-square rooms.' },
   { id: 'fountain', label: 'Fountain',     hint: 'Click a cell to place/remove a fountain (original Underworld fountain). Sits on floor.' },
-  { id: 'wrap',     label: 'Wrap Border',  hint: 'Click an edge cell to mark a wrap-around border. Set its Exit on the right.' },
+  { id: 'wrap',     label: 'Wrap Border',  hint: 'Click an edge cell to mark a wrap border. Set a per-direction exit (N/E/S/W) on the right; at least one is required.' },
   { id: 'erase',    label: 'Erase',        hint: 'Hold and drag to clear cells back to empty (floor/wall/fountain/border).' }
 ];
 
@@ -96,13 +104,13 @@ function applyTool(idx) {
     }
     case 'wrap': {
       const existing = borderAt(lv, idx);
-      if (existing) {                                       // toggle off + unlink partner
-        lv.wrapBorders.forEach(b => { if (b.exit === existing.id) b.exit = null; });
+      if (existing) {                                       // toggle off + unlink anything pointing here
+        unlinkReferences(lv, existing.id);
         lv.wrapBorders = lv.wrapBorders.filter(b => b.index !== idx);
       } else {
-        lv.wrapBorders.push({ id: lv.nextBorderId++, index: idx, exit: null });
+        lv.wrapBorders.push({ id: lv.nextBorderId++, index: idx, exits: emptyExits() });
       }
-      structural = true;                                     // updates inspector + partner tags
+      structural = true;                                     // updates inspector + tags
       break;
     }
     case 'erase': {
@@ -110,9 +118,9 @@ function applyTool(idx) {
       const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1);
       const b = borderAt(lv, idx);
       if (b) {
-        lv.wrapBorders.forEach(o => { if (o.exit === b.id) o.exit = null; });
+        unlinkReferences(lv, b.id);
         lv.wrapBorders = lv.wrapBorders.filter(o => o.index !== idx);
-        structural = true;                                   // a border (and maybe a link) went away
+        structural = true;                                   // a border (and maybe links) went away
       }
       break;
     }
@@ -168,7 +176,12 @@ async function loadDng() {
             (jl.fountains || []).forEach(f => levels[li].fountains.push(f.y * GRID + f.x));
             let maxId = 0;
             (jl.wrapBorders || []).forEach(b => {
-              levels[li].wrapBorders.push({ id: b.id, index: b.y * GRID + b.x, exit: b.exit ?? null });
+              // New format: b.exits {N,E,S,W}. Old format: single b.exit -> apply to all dirs.
+              let exits;
+              if (b.exits) { exits = emptyExits(); DIRS.forEach(d => { exits[d] = b.exits[d] ?? null; }); }
+              else if (b.exit != null) { exits = { N: b.exit, E: b.exit, S: b.exit, W: b.exit }; }
+              else { exits = emptyExits(); }
+              levels[li].wrapBorders.push({ id: b.id, index: b.y * GRID + b.x, exits });
               if (b.id > maxId) maxId = b.id;
             });
             levels[li].nextBorderId = maxId + 1;
@@ -210,12 +223,26 @@ function buildSidecar() {
       height: GRID,
       cells: lv.cells.slice(),                 // 0=empty 1=floor 2=wall (row-major)
       fountains: lv.fountains.map(i => xy(i)),
-      wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(b.index), exit: b.exit }))
+      wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } }))
     }))
   };
 }
 
+function bordersMissingExit() {
+  const bad = [];
+  state.levels.forEach((lv, li) => lv.wrapBorders.forEach(b => {
+    if (exitDirs(b).length === 0) bad.push('L' + (li + 1) + ' W' + b.id);
+  }));
+  return bad;
+}
+
 async function saveMap() {
+  const bad = bordersMissingExit();
+  if (bad.length) {
+    const ok = confirm('These wrap borders have no exit direction set and will do nothing in-game:\n  ' +
+      bad.join(', ') + '\n\nEach wrap border should define at least one direction. Save anyway?');
+    if (!ok) return;
+  }
   const p = await ipcRenderer.invoke('dialog:saveDng');
   if (!p) return;
   try {
@@ -249,7 +276,12 @@ function fillCell(node, lv, idx) {
   node.className = cellClass(lv, idx);
   node.textContent = '';
   const b = borderAt(lv, idx);
-  if (b) node.appendChild(el('div', 'border-tag', 'W' + b.id + (b.exit ? '\u2192' + b.exit : '')));
+  if (b) {
+    const dirs = exitDirs(b);
+    const tag = el('div', 'border-tag' + (dirs.length === 0 ? ' border-tag-warn' : ''),
+      'W' + b.id + (dirs.length ? ' ' + dirs.join('') : ' !'));
+    node.appendChild(tag);
+  }
   if (fountainAt(lv, idx) >= 0) node.appendChild(el('div', 'fountain-mark', '\u26F2'));
 }
 
@@ -335,27 +367,29 @@ function render() {
   const inspector = el('div', 'inspector');
   inspector.appendChild(el('h2', null, 'Wrap Borders \u2014 Level ' + (state.level + 1)));
   if (lv.wrapBorders.length === 0) {
-    inspector.appendChild(el('div', 'muted', 'No wrap borders yet. Pick the Wrap Border tool and click cells on the edges you want to link.'));
+    inspector.appendChild(el('div', 'muted', 'No wrap borders yet. Pick the Wrap Border tool and click edge cells. Each border needs at least one directional exit \u2014 the player warps only when they leave the cell across that edge.'));
   } else {
     lv.wrapBorders.forEach(bd => {
       const p = xy(bd.index);
-      const row = el('div', 'border-row');
-      row.appendChild(el('div', 'border-id', 'W' + bd.id + ' (' + p.x + ',' + p.y + ')'));
-      const sel = document.createElement('select');
-      sel.className = 'exit-select';
-      const none = document.createElement('option'); none.value = ''; none.textContent = 'Exit: (none)'; sel.appendChild(none);
-      lv.wrapBorders.filter(o => o.id !== bd.id).forEach(o => {
-        const op = document.createElement('option'); op.value = String(o.id); op.textContent = 'Exit \u2192 W' + o.id; sel.appendChild(op);
+      const hasExit = exitDirs(bd).length > 0;
+      const row = el('div', 'border-row' + (hasExit ? '' : ' border-row-warn'));
+      row.appendChild(el('div', 'border-id', 'W' + bd.id + '  (' + p.x + ',' + p.y + ')'));
+      if (!hasExit) row.appendChild(el('div', 'warn-msg', '\u26A0 Needs at least one exit direction.'));
+      DIRS.forEach(d => {
+        const line = el('div', 'dir-line');
+        line.appendChild(el('div', 'dir-label', DIR_LABEL[d]));
+        const sel = document.createElement('select');
+        sel.className = 'exit-select';
+        const none = document.createElement('option'); none.value = ''; none.textContent = '(no exit)'; sel.appendChild(none);
+        lv.wrapBorders.filter(o => o.id !== bd.id).forEach(o => {
+          const op = document.createElement('option'); op.value = String(o.id);
+          op.textContent = '\u2192 W' + o.id; sel.appendChild(op);
+        });
+        sel.value = bd.exits[d] != null ? String(bd.exits[d]) : '';
+        sel.onchange = () => { bd.exits[d] = sel.value ? parseInt(sel.value, 10) : null; render(); };
+        line.appendChild(sel);
+        row.appendChild(line);
       });
-      sel.value = bd.exit ? String(bd.exit) : '';
-      sel.onchange = () => {
-        const val = sel.value ? parseInt(sel.value, 10) : null;
-        bd.exit = val;
-        // make the link two-way for convenience
-        if (val != null) { const partner = lv.wrapBorders.find(o => o.id === val); if (partner) partner.exit = bd.id; }
-        render();
-      };
-      row.appendChild(sel);
       inspector.appendChild(row);
     });
   }

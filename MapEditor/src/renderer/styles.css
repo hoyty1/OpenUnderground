@@ -102,9 +102,14 @@ body {
 
 /* ---- Inspector ---- */
 .muted { font-size: 12px; color: #888; line-height: 1.5; }
-.border-row { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid #333; border-radius: 6px; margin-bottom: 8px; background: #202020; }
+.border-row { display: flex; flex-direction: column; gap: 5px; padding: 9px; border: 1px solid #333; border-radius: 6px; margin-bottom: 8px; background: #202020; }
+.border-row-warn { border-color: #d9534f; background: #2a1c1c; }
 .border-id { font-size: 13px; font-weight: 600; color: #d69bff; }
-.exit-select { background: #161616; color: #e8e4d8; border: 1px solid #444; border-radius: 5px; padding: 5px; font-size: 12px; }
+.warn-msg { font-size: 11px; color: #ff8a85; }
+.dir-line { display: flex; align-items: center; gap: 6px; }
+.dir-label { width: 44px; flex-shrink: 0; font-size: 11px; color: #9a9a9a; }
+.exit-select { flex: 1; background: #161616; color: #e8e4d8; border: 1px solid #444; border-radius: 5px; padding: 4px; font-size: 12px; }
+.border-tag-warn { background: #d9534f; }
 .legend { display: flex; flex-direction: column; gap: 8px; }
 .legend-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .legend-row .tool-swatch { width: 24px; height: 24px; }
