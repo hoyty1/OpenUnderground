@@ -827,7 +827,15 @@ public class PlayerObject : MonoBehaviour
 
                 if (wrapped)
                 {
+                    // Committing the loop-period reposition while the CharacterController is enabled
+                    // makes PhysX treat it as a one-frame swept move, which shows up as a hitch at the
+                    // seam even though the ghost geometry means the view is identical on either side.
+                    // Toggling the controller off around the write teleports cleanly with no sweep, so
+                    // the wrap is imperceptible.
+                    bool ccWasEnabled = cachedCharacterController != null && cachedCharacterController.enabled;
+                    if (ccWasEnabled) cachedCharacterController.enabled = false;
                     transform.position = pos;
+                    if (ccWasEnabled) cachedCharacterController.enabled = true;
                 }
             }
         }
@@ -1069,7 +1077,15 @@ public class PlayerObject : MonoBehaviour
 
                 if (wrapped)
                 {
+                    // Committing the loop-period reposition while the CharacterController is enabled
+                    // makes PhysX treat it as a one-frame swept move, which shows up as a hitch at the
+                    // seam even though the ghost geometry means the view is identical on either side.
+                    // Toggling the controller off around the write teleports cleanly with no sweep, so
+                    // the wrap is imperceptible.
+                    bool ccWasEnabled = cachedCharacterController != null && cachedCharacterController.enabled;
+                    if (ccWasEnabled) cachedCharacterController.enabled = false;
                     transform.position = pos;
+                    if (ccWasEnabled) cachedCharacterController.enabled = true;
                 }
             }
         }
