@@ -220,8 +220,8 @@ public class LevelGeometry : LevelObject
         if (loader.deceitMode)
         {
             // Overlay the map editor's per-level texture palettes (built in DeceitLoader) onto
-            // the fixed 48 wall / 10 floor material slots. Null palettes (legacy DECEIT.DNG
-            // levels) leave the plain checkerboard behaviour untouched.
+            // the fixed 48 wall / 10 floor material slots. Null palettes leave the plain
+            // checkerboard behaviour untouched.
             int[] wallPal = DeceitLoader.WallPalette;
             if (wallPal != null)
             {

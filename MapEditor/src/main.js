@@ -19,16 +19,6 @@ function createWindow() {
 
 // --- Native dialogs live in the main process; the renderer asks for a path via IPC,
 // --- then does the actual file read/write itself with the 'fs' module (nodeIntegration).
-ipcMain.handle('dialog:openDng', async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Load DECEIT.DNG as a starting point',
-    properties: ['openFile'],
-    filters: [{ name: 'Deceit dungeon', extensions: ['DNG', 'dng'] }]
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
-});
-
 ipcMain.handle('dialog:openMap', async () => {
   const result = await dialog.showOpenDialog({
     title: 'Load DECEIT.map.json (arbitrary-size map)',
@@ -39,11 +29,11 @@ ipcMain.handle('dialog:openMap', async () => {
   return result.filePaths[0];
 });
 
-ipcMain.handle('dialog:saveDng', async () => {
+ipcMain.handle('dialog:saveMap', async () => {
   const result = await dialog.showSaveDialog({
-    title: 'Save map (writes DECEIT.DNG + DECEIT.map.json)',
-    defaultPath: 'DECEIT.DNG',
-    filters: [{ name: 'Deceit dungeon', extensions: ['DNG', 'dng'] }]
+    title: 'Save DECEIT.map.json',
+    defaultPath: 'DECEIT.map.json',
+    filters: [{ name: 'Deceit map', extensions: ['json'] }]
   });
   if (result.canceled || !result.filePath) return null;
   return result.filePath;

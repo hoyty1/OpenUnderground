@@ -1,15 +1,14 @@
 # Deceit Map Editor
 
 Visual map editor for OpenUnderground's Dungeon Deceit. Paint walkable dungeons with a
-tool palette, load the original `DECEIT.DNG` as a starting point, and save a map the Unity
-engine can read.
+tool palette and save a `DECEIT.map.json` map the Unity engine reads directly.
 
 Built as a standalone Windows app (Electron). Plain vanilla JS with **no CDN and no build
 step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.14.2.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.14.3.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 
@@ -152,14 +151,10 @@ hand-painted wall textures on that tile.
 
 ## Loading & saving
 
-- **Load DECEIT.DNG** — imports all 9 levels as a starting point (open cells → Floor,
-  solid cells → Wall). If a `DECEIT.map.json` sits next to the `.DNG`, its fountains and
-  wrap borders are merged back in.
-- **Save Map** — writes **two** files to the folder you choose:
-  - `DECEIT.DNG` — floor/wall geometry the engine already reads (checkerboard floors +
-    grey-brick walls). Copy this into `Assets/StreamingAssets/` to play it.
-  - `DECEIT.map.json` — sidecar with fountains and wrap-border exits (consumed by the
-    engine's Deceit loader).
+- **Load Map (.json)** — opens a `DECEIT.map.json` for editing.
+- **Save Map** — writes `DECEIT.map.json` to the location you choose. This single file
+  carries all geometry, textures, fountains, wrap-border exits and stairs. Copy it into
+  `Assets/StreamingAssets/` for the engine to load it.
 
 ## Map sidecar format (`DECEIT.map.json`)
 

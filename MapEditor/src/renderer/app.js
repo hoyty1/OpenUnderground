@@ -7,7 +7,7 @@ const path = require('path');
 const { ipcRenderer } = require('electron');
 
 // ---- Model constants -------------------------------------------------------
-const LEVELS = 9;           // DECEIT.DNG holds 9 levels
+const LEVELS = 9;           // number of dungeon levels
 const TILES_PER_CELL = 11;  // each cell -> 11x11 checkerboard floor tiles in the engine
 const DEFAULT_W = 8;        // legacy Deceit level width
 const DEFAULT_H = 8;        // legacy Deceit level height
@@ -25,7 +25,7 @@ function unlinkReferences(lv, gone) {
   lv.wrapBorders.forEach(b => DIRS.forEach(d => { if (b.exits[d] === gone) b.exits[d] = null; }));
 }
 
-// Level 1 of the original Deceit dungeon (high nibble of each DECEIT.DNG byte).
+// Level 1 of the original Deceit dungeon (1 = floor, 0 = wall).
 // Used so the editor shows a real map on first launch without opening a file.
 const LEVEL_1_DEFAULT = [
   0xF,0xF,0xF,0x0,0xF,0xF,0xF,0x0,
@@ -469,43 +469,6 @@ function buildLevelsFromSidecar(json) {
   return levels;
 }
 
-async function loadDng() {
-  const p = await ipcRenderer.invoke('dialog:openDng');
-  if (!p) return;
-  try {
-    const buf = fs.readFileSync(p);
-    if (buf.length < LEVELS * 512) { alert('Invalid DECEIT.DNG: file too small.'); return; }
-    // Legacy DNG is a fixed 8x8-per-level format.
-    let levels = [];
-    for (let l = 0; l < LEVELS; l++) {
-      const off = l * 512;
-      const lv = blankLevel(DEFAULT_W, DEFAULT_H);
-      for (let i = 0; i < DEFAULT_W * DEFAULT_H; i++) {
-        const nibble = (buf[off + i] >> 4) & 0xF;
-        lv.cells[i] = nibble !== 0x0 ? CELL.FLOOR : CELL.WALL;
-      }
-      levels.push(lv);
-    }
-    // A sidecar next to the .DNG is authoritative (arbitrary dims + fountains + borders).
-    const dir = path.dirname(p);
-    const sidecar = path.join(dir, 'DECEIT.map.json');
-    let usedSidecar = false;
-    if (fs.existsSync(sidecar)) {
-      try { levels = buildLevelsFromSidecar(JSON.parse(fs.readFileSync(sidecar, 'utf8'))); usedSidecar = true; }
-      catch (e) { console.warn('sidecar parse failed', e); }
-    }
-    state.levels = levels;
-    state.loadedDir = dir;
-    state.level = 0;
-    state.selected = null;
-    setStatus('Loaded ' + path.basename(p) + (usedSidecar ? ' + DECEIT.map.json' : '') + ' as starting point.');
-    render();
-    historyReset();   // undo history does not span a freshly loaded map
-  } catch (e) {
-    alert('Failed to read file: ' + e.message);
-  }
-}
-
 async function loadMap() {
   const p = await ipcRenderer.invoke('dialog:openMap');
   if (!p) return;
@@ -521,20 +484,6 @@ async function loadMap() {
   } catch (e) {
     alert('Failed to read map: ' + e.message);
   }
-}
-
-// Legacy 8x8 DNG buffer. Only written when every level is 8x8; larger maps are
-// carried by the sidecar (the engine reads DECEIT.map.json for those).
-function buildDngBuffer() {
-  const buf = Buffer.alloc(LEVELS * 512);
-  for (let l = 0; l < LEVELS; l++) {
-    const off = l * 512;
-    const lv = state.levels[l];
-    for (let i = 0; i < DEFAULT_W * DEFAULT_H; i++) {
-      buf[off + i] = lv.cells[i] === CELL.FLOOR ? 0xF0 : 0x00;
-    }
-  }
-  return buf;
 }
 
 function buildSidecar() {
@@ -633,24 +582,15 @@ async function saveMap() {
       badTex.join('\n  ') + '\n\nSave anyway?');
     if (!ok) return;
   }
-  const p = await ipcRenderer.invoke('dialog:saveDng');
+  const p = await ipcRenderer.invoke('dialog:saveMap');
   if (!p) return;
   try {
     const dir = path.dirname(p);
-    const sidecar = path.join(dir, 'DECEIT.map.json');
+    const sidecar = p.toLowerCase().endsWith('.json') ? p : path.join(dir, 'DECEIT.map.json');
     fs.writeFileSync(sidecar, JSON.stringify(buildSidecar(), null, 2));
-
-    const allLegacy = state.levels.every(lv => lv.width === DEFAULT_W && lv.height === DEFAULT_H);
-    let dngNote;
-    if (allLegacy) {
-      fs.writeFileSync(p, buildDngBuffer());
-      dngNote = '\u2022 ' + p + '\n';
-    } else {
-      dngNote = '(legacy DECEIT.DNG skipped \u2014 map exceeds 8\u00D78; the engine reads DECEIT.map.json)\n';
-    }
-    state.loadedDir = dir;
-    setStatus('Saved DECEIT.map.json' + (allLegacy ? ' + DECEIT.DNG' : ' (sidecar only, arbitrary size)') + ' to ' + dir);
-    alert('Saved:\n' + dngNote + '\u2022 ' + sidecar + '\n\nCopy these into Assets/StreamingAssets/ for the engine.');
+    state.loadedDir = path.dirname(sidecar);
+    setStatus('Saved ' + path.basename(sidecar) + ' to ' + state.loadedDir);
+    alert('Saved:\n\u2022 ' + sidecar + '\n\nCopy this into Assets/StreamingAssets/ for the engine.');
   } catch (e) {
     alert('Failed to save: ' + e.message);
   }
@@ -1024,7 +964,6 @@ function render() {
   const redoBtn = button('\u21B7 Redo', 'btn', redo); redoBtn.disabled = redoStack.length === 0; redoBtn.title = 'Redo (Ctrl+Y or Ctrl+Shift+Z)';
   hc.appendChild(undoBtn); hc.appendChild(redoBtn);
   hc.appendChild(button('Wall Texture Properties', 'btn', openWallTexProps));
-  hc.appendChild(button('Load DECEIT.DNG', 'btn', loadDng));
   hc.appendChild(button('Load Map (.json)', 'btn', loadMap));
   hc.appendChild(button('Save Map', 'btn btn-primary', saveMap));
   header.appendChild(hc);

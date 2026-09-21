@@ -1,4 +1,3 @@
-using System.IO;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -7,8 +6,7 @@ using UnityEngine.UI;
 ///
 /// Reads the DECEIT.map.json sidecar (via DeceitLoader) so it draws the SAME geometry
 /// the engine actually builds — arbitrary per-level dimensions, floor/empty/wall cells,
-/// fountains and the painted spawn point. Falls back to the legacy 8×8 DECEIT.DNG only
-/// for levels that have no sidecar entry.
+/// fountains and the painted spawn point.
 ///
 /// A yellow marker tracks the player's cell and updates every frame. The overlay sits in
 /// the top-left corner and rebuilds its texture whenever the level (or its size) changes.
@@ -27,10 +25,6 @@ public class DeceitMinimap : MonoBehaviour
     private static readonly Color32 ColWall     = new Color32( 18,  18,  18, 255);
     private static readonly Color32 ColEmpty    = new Color32( 28,  28,  28, 255); // unpainted void
     private static readonly Color32 ColPassage  = new Color32( 72,  72,  72, 255); // floor
-    private static readonly Color32 ColLadderUp = new Color32(  0, 220, 220, 255); // cyan (DNG)
-    private static readonly Color32 ColLadderDn = new Color32( 50,  80, 220, 255); // blue (DNG)
-    private static readonly Color32 ColDoor     = new Color32(255, 165,   0, 255); // amber (DNG)
-    private static readonly Color32 ColSpecial  = new Color32(200,   0, 200, 255); // magenta (DNG)
     private static readonly Color32 ColFountain = new Color32(110, 211, 255, 255); // light blue
     private static readonly Color32 ColSpawn    = new Color32(124, 252,   0, 255); // green
     private static readonly Color32 ColPlayer   = new Color32(255, 240,   0, 255); // yellow
@@ -57,13 +51,12 @@ public class DeceitMinimap : MonoBehaviour
     private RectTransform _mapRt;
     private RectTransform _bgRt;
     private Texture2D     _tex;
-    private byte[]        _dng;
 
-    // current level geometry (from sidecar, or DNG fallback)
+    // current level geometry (from the sidecar)
     private int    _gridW = 8, _gridH = 8;
     private int    _pixelScale = 10;
     private int    _texW, _texH;
-    private int[]  _cells;                         // sidecar cells (null => DNG path)
+    private int[]  _cells;                         // sidecar cells (null => no geometry for this level)
     private DeceitLoader.DeceitPoint[] _fountains; // sidecar fountains (may be null)
     private DeceitLoader.DeceitPoint   _spawn;     // sidecar spawn (may be null)
 
@@ -74,11 +67,6 @@ public class DeceitMinimap : MonoBehaviour
     // ── setup ─────────────────────────────────────────────────────────────
     private void Build()
     {
-        // Legacy DNG kept only as a fallback for levels with no sidecar entry.
-        string dngPath = Path.Combine(Application.streamingAssetsPath, "DECEIT.DNG");
-        if (File.Exists(dngPath))
-            _dng = File.ReadAllBytes(dngPath);
-
         // Canvas (screen-space, drawn on top of everything)
         Canvas canvas = gameObject.AddComponent<Canvas>();
         canvas.renderMode   = RenderMode.ScreenSpaceOverlay;
@@ -135,7 +123,7 @@ public class DeceitMinimap : MonoBehaviour
             cx = Mathf.Clamp(Mathf.FloorToInt(pos.x / cellSz), 0, _gridW - 1);
             int czWorld = Mathf.Clamp(Mathf.FloorToInt(pos.z / cellSz), 0, _gridH - 1);
             // Sidecar levels build the world N/S-flipped (row 0 = north = high world z),
-            // so invert world row back to sidecar row for the marker. DNG levels are un-flipped.
+            // so invert world row back to sidecar row for the marker.
             cz = (_cells != null) ? (_gridH - 1 - czWorld) : czWorld;
         }
 
@@ -154,7 +142,7 @@ public class DeceitMinimap : MonoBehaviour
 
     // ── per-level setup ───────────────────────────────────────────────────
     /// <summary>
-    /// Loads the geometry for the given level from the sidecar (preferred) or DNG, computes
+    /// Loads the geometry for the given level from the sidecar, computes
     /// the pixel scale and (re)allocates the texture/rects to fit the level's dimensions.
     /// </summary>
     private void RebuildForLevel(int level)
@@ -175,7 +163,7 @@ public class DeceitMinimap : MonoBehaviour
         {
             _gridW     = 8;
             _gridH     = 8;
-            _cells     = null;   // DNG fallback
+            _cells     = null;   // no sidecar geometry for this level
             _fountains = null;
             _spawn     = null;
         }
@@ -210,9 +198,6 @@ public class DeceitMinimap : MonoBehaviour
         for (int i = 0; i < pixels.Length; i++)
             pixels[i] = ColBg;
 
-        int level       = (_lastLevel > 0) ? _lastLevel : 1;
-        int levelOffset = (level - 1) * 512;
-
         for (int row = 0; row < _gridH; row++)
         {
             for (int col = 0; col < _gridW; col++)
@@ -222,11 +207,6 @@ public class DeceitMinimap : MonoBehaviour
                 {
                     int code = _cells[row * _gridW + col]; // 0=empty,1=floor,2=wall
                     color = (code == 1) ? ColPassage : (code == 2 ? ColWall : ColEmpty);
-                }
-                else if (_dng != null)
-                {
-                    int byteIdx = levelOffset + row * 8 + col;
-                    color = (byteIdx < _dng.Length) ? NibbleToColor((_dng[byteIdx] >> 4) & 0xF) : ColWall;
                 }
                 else
                 {
@@ -291,19 +271,6 @@ public class DeceitMinimap : MonoBehaviour
                 if (xx < 0 || xx >= _texW) continue;
                 pixels[yy * _texW + xx] = color;
             }
-        }
-    }
-
-    private static Color32 NibbleToColor(int nibble)
-    {
-        switch (nibble)
-        {
-            case 0x0: return ColWall;
-            case 0x1: return ColLadderUp;   // ladder up
-            case 0x2: return ColLadderDn;   // ladder down
-            case 0xC: return ColDoor;       // door
-            case 0xD: return ColSpecial;    // special room
-            default:  return ColPassage;    // 0x3-0xB, 0xE, 0xF = various passable types
         }
     }
 }

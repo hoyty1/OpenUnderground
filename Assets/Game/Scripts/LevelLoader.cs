@@ -121,7 +121,7 @@ public class LevelLoader : MonoBehaviour
     // 1-indexed
     public int loadedLevel;
 
-    // When true, levels are built from the Ultima IV DECEIT.DNG file (88x88)
+    // When true, levels are built from the Dungeon Deceit map (DECEIT.map.json)
     // instead of the UW1 64x64 lev.ark tile format.
     public bool deceitMode = false;
 

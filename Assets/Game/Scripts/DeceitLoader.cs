@@ -5,12 +5,9 @@ using UnityEngine;
 /// <summary>
 /// Builds a Level's tile grid for the Dungeon Deceit dungeons.
 ///
-/// Two data sources, in priority order:
-///   1. DECEIT.map.json (the map editor's sidecar) — authoritative. Supports arbitrary
-///      per-level dimensions (not just 8×8), floor/empty/wall cells, fountains and wrap
-///      borders. This is the real Deceit geometry authored in the Windows map editor.
-///   2. DECEIT.DNG (legacy Ultima IV dungeon file) — fallback when no sidecar level exists.
-///      The classic 8×8 U4 cell grid, expanded to (8*TilesPerCell)² UW tiles.
+/// Geometry comes from DECEIT.map.json (the map editor's sidecar) — the sole, authoritative
+/// source. It supports arbitrary per-level dimensions, floor/empty/wall cells, fountains and
+/// wrap borders. This is the real Deceit geometry authored in the Windows map editor.
 ///
 /// Each authored cell is expanded to TilesPerCell×TilesPerCell UW tiles so corridors have
 /// real width and the checkerboard floor reads correctly at game scale.
@@ -18,15 +15,12 @@ using UnityEngine;
 /// </summary>
 public static class DeceitLoader
 {
-    private const int CellCount = 8;         // legacy U4 grid is 8×8 cells
     public  const int TilesPerCell = 11;     // UW tiles per authored cell — each Deceit square = 11×11 floor tiles
 
     // Player spawn, in UW TILE coordinates (NOT cell coordinates). Set during BuildLevel
-    // to the centre tile of a valid floor cell. Defaults to the centre of legacy cell (4,4).
+    // to the centre tile of a valid floor cell. Defaults to the centre of cell (4,4).
     public static int SpawnCellX = 4 * TilesPerCell + TilesPerCell / 2;
     public static int SpawnCellY = 4 * TilesPerCell + TilesPerCell / 2;
-
-    private const int GridSize = CellCount * TilesPerCell; // legacy fallback size (= 88 at TilesPerCell=11)
 
     // ---- Sidecar (DECEIT.map.json) data model -------------------------------------------
     // Kept in sync with the map editor's buildSidecar(): version 2, row-major cells,
@@ -145,7 +139,7 @@ public static class DeceitLoader
         string mapPath = Path.Combine(Application.streamingAssetsPath, "DECEIT.map.json");
         if (!File.Exists(mapPath))
         {
-            Debug.Log("[DeceitLoader] No DECEIT.map.json sidecar found; using legacy DECEIT.DNG.");
+            Debug.LogError("[DeceitLoader] No DECEIT.map.json found in StreamingAssets.");
             return null;
         }
 
@@ -243,7 +237,7 @@ public static class DeceitLoader
     /// <summary>
     /// Populates the given Level's tile grid with Deceit dungeon geometry.
     /// uwLevel is 1-based (matching loadedLevel in LevelLoader).
-    /// Prefers the sidecar (arbitrary dims); falls back to the legacy 8×8 DECEIT.DNG.
+    /// Geometry comes entirely from the DECEIT.map.json sidecar.
     /// </summary>
     public static void BuildLevel(int uwLevel, Level level)
     {
@@ -257,7 +251,8 @@ public static class DeceitLoader
         }
         else
         {
-            BuildFromDng(uwLevel, level);
+            Debug.LogError($"[DeceitLoader] No sidecar geometry for level {uwLevel}; "
+                + "check DECEIT.map.json in StreamingAssets. Leaving level empty.");
         }
     }
 
@@ -630,68 +625,6 @@ public static class DeceitLoader
         }
 
         Debug.Log($"[DeceitLoader] Built level {uwLevel} from sidecar ({cw}×{ch} cells → {gw}×{gh} tiles).");
-    }
-
-    /// <summary>Legacy path: builds the classic 8×8 U4 grid from DECEIT.DNG.</summary>
-    private static void BuildFromDng(int uwLevel, Level level)
-    {
-        // Legacy path has no per-cell texture data; clear any palette left by a sidecar level
-        // so LevelGeometry falls back to the plain gold/black checkerboard for this level.
-        WallPalette = null;
-        FloorPalette = null;
-        WallPaletteOverflow = 0;
-        FloorPaletteOverflow = 0;
-
-        string dngPath = Path.Combine(Application.streamingAssetsPath, "DECEIT.DNG");
-        if (!File.Exists(dngPath))
-        {
-            Debug.LogError($"[DeceitLoader] DECEIT.DNG not found at: {dngPath}");
-            return;
-        }
-
-        byte[] dng = File.ReadAllBytes(dngPath);
-
-        int deceitIndex = uwLevel - 1;
-        int levelOffset = deceitIndex * 512;
-        if (levelOffset + 64 > dng.Length)
-        {
-            Debug.LogError($"[DeceitLoader] DECEIT.DNG too short for level {uwLevel} (offset {levelOffset})");
-            return;
-        }
-
-        level.ResizeTiles(GridSize, GridSize);
-        InitSolid(level, GridSize, GridSize);
-
-        for (int row = 0; row < CellCount; row++)
-        {
-            for (int col = 0; col < CellCount; col++)
-            {
-                byte cell = dng[levelOffset + row * CellCount + col];
-                int typeNibble = (cell >> 4) & 0xF;
-                bool isPassable = typeNibble != 0x0;
-
-                int uxBase = col * TilesPerCell;
-                int uyBase = row * TilesPerCell;
-                for (int dy = 0; dy < TilesPerCell; dy++)
-                {
-                    for (int dx = 0; dx < TilesPerCell; dx++)
-                    {
-                        Tile t = level.tiles[uxBase + dx, uyBase + dy];
-                        t.type = isPassable ? 1 : 0;
-                        if (isPassable)
-                        {
-                            t.floorTexture = (dx + dy) % 2;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Legacy spawn: centre tile of cell (4,4).
-        SpawnCellX = 4 * TilesPerCell + TilesPerCell / 2;
-        SpawnCellY = 4 * TilesPerCell + TilesPerCell / 2;
-
-        Debug.Log($"[DeceitLoader] Built level {uwLevel} from DECEIT.DNG ({GridSize}×{GridSize} tiles).");
     }
 
     /// <summary>

@@ -1,6 +1,6 @@
 {
   "name": "deceit-map-editor",
-  "version": "1.14.2",
+  "version": "1.14.3",
   "description": "Ultima IV Deceit dungeon map editor for OpenUnderground (offline vanilla-JS build with tool palette)",
   "main": "src/main.js",
   "scripts": {
