@@ -8,7 +8,7 @@ step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.14.3.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.14.4.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 

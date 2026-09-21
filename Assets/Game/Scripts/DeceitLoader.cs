@@ -580,7 +580,14 @@ public static class DeceitLoader
                 else if (side == "S") t = level.tiles[uxBase + c, uyBase];                     // south wall
                 else if (side == "W") t = level.tiles[uxBase, uyBase + c];                     // west wall
                 else                  t = level.tiles[uxBase + TilesPerCell - 1, uyBase + c];   // east wall ("E")
-                t.wallTexture = slot; t.objWallBg = -1;
+                t.wallTexture = slot;
+                // Respect the "don't repeat vertically" flag on the stairway texture: when it is
+                // flagged as an object wall texture, render it ONCE at the bottom over the room's
+                // default wall (background slot) instead of tiling it up the whole wall.
+                int stCellIdx = scy * cw + scx;
+                int stCellDefWall = (haveWallTex && sc.wallTex[stCellIdx] >= 0) ? sc.wallTex[stCellIdx] : lvlDefWall;
+                int stBgSlot = stCellDefWall >= 0 ? wallSlotFor(stCellDefWall) : 0;
+                t.objWallBg = IsObjectWallMat(mat) ? stBgSlot : -1;
             }
         }
 

@@ -809,7 +809,9 @@ function openWallTexProps() {
     attachTexPreview(s, wallThumb(i), 'Wall texture ' + i);
     grid.appendChild(s);
   }
-  layout.appendChild(grid);
+  const scroll = el('div', 'wtp-scroll');
+  scroll.appendChild(grid);
+  layout.appendChild(scroll);
   layout.appendChild(panel);
   modal.appendChild(layout);
   renderPanel();
