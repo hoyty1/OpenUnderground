@@ -129,6 +129,62 @@ const state = {
   status: 'Level 1 pre-loaded from the original Deceit dungeon. Resize the grid to draw larger layouts; paint with the palette on the left.'
 };
 
+// ---- Undo / redo history ---------------------------------------------------
+// The undoable "document" is the map data only: every level plus the dungeon-wide
+// defaults. UI state (current level, selected cell, open zoom modal, active tool)
+// is deliberately excluded so undo never yanks the view around. History entries are
+// JSON snapshots. A whole paint/drag stroke is coalesced into ONE entry (captured at
+// stopPaint), and every discrete edit (pickers, defaults, resize, inspector, zoom)
+// is captured at the end of render() by diffing against the last committed snapshot,
+// so no per-callback instrumentation is required.
+const MAX_UNDO = 80;
+const undoStack = [];
+const redoStack = [];
+let _histBaseline = null;   // JSON of the last committed document
+let _histSuspend = false;   // true while restoring, so render()'s capture is a no-op
+function docSnapshotJSON() { return JSON.stringify({ levels: state.levels, mapDefaults: state.mapDefaults }); }
+function recordHistory() {
+  if (_histSuspend) return;
+  if (state.painting || state.zoomPainting) return;   // mid-stroke: wait for stopPaint
+  const cur = docSnapshotJSON();
+  if (_histBaseline === null) { _histBaseline = cur; return; }  // first render establishes the baseline
+  if (cur === _histBaseline) return;                  // nothing about the map changed
+  undoStack.push(_histBaseline);
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+  redoStack.length = 0;
+  _histBaseline = cur;
+}
+function historyReset() { undoStack.length = 0; redoStack.length = 0; _histBaseline = docSnapshotJSON(); }
+function restoreDoc(jsonStr) {
+  const d = JSON.parse(jsonStr);
+  state.levels = d.levels;
+  state.mapDefaults = d.mapDefaults;
+  const lv = state.levels[state.level] || state.levels[0];
+  const total = lv.width * lv.height;
+  if (state.selected != null && state.selected >= total) state.selected = null;
+  if (state.zoomCell != null && (state.zoomCell >= total || lv.cells[state.zoomCell] !== CELL.FLOOR)) { state.zoomCell = null; state._zoomEdges = null; }
+}
+function undo() {
+  if (!undoStack.length) { setStatus('Nothing to undo.'); return; }
+  redoStack.push(_histBaseline);
+  _histBaseline = undoStack.pop();
+  _histSuspend = true;
+  restoreDoc(_histBaseline);
+  state.status = 'Undo \u2014 ' + undoStack.length + ' step(s) left.';
+  render();
+  _histSuspend = false;
+}
+function redo() {
+  if (!redoStack.length) { setStatus('Nothing to redo.'); return; }
+  undoStack.push(_histBaseline);
+  _histBaseline = redoStack.pop();
+  _histSuspend = true;
+  restoreDoc(_histBaseline);
+  state.status = 'Redo \u2014 ' + redoStack.length + ' step(s) left.';
+  render();
+  _histSuspend = false;
+}
+
 const TOOLS = [
   { id: 'floor',    label: 'Floor',        hint: 'Walkable 11x11 gold/black checkerboard cell (no walls). Hold and drag to paint.' },
   { id: 'wall',     label: 'Wall',         hint: 'Solid grey-brick wall cell. Hold and drag to trace non-square rooms.' },
@@ -338,7 +394,7 @@ function paintAt(idx, isDragEnter) {
   refreshCell(idx);
 }
 
-function stopPaint() { state.painting = false; state.strokeCells = null; state.zoomPainting = false; state.zoomStroke = null; }
+function stopPaint() { state.painting = false; state.strokeCells = null; state.zoomPainting = false; state.zoomStroke = null; recordHistory(); }
 
 // ---- File I/O --------------------------------------------------------------
 // Build the full level list from a DECEIT.map.json sidecar object (authoritative:
@@ -436,6 +492,7 @@ async function loadDng() {
     state.selected = null;
     setStatus('Loaded ' + path.basename(p) + (usedSidecar ? ' + DECEIT.map.json' : '') + ' as starting point.');
     render();
+    historyReset();   // undo history does not span a freshly loaded map
   } catch (e) {
     alert('Failed to read file: ' + e.message);
   }
@@ -452,6 +509,7 @@ async function loadMap() {
     state.selected = null;
     setStatus('Loaded ' + path.basename(p) + ' (arbitrary-size map).');
     render();
+    historyReset();   // undo history does not span a freshly loaded map
   } catch (e) {
     alert('Failed to read map: ' + e.message);
   }
@@ -845,6 +903,9 @@ function render() {
   const header = el('div', 'header');
   header.appendChild(el('h1', null, 'Deceit Map Editor'));
   const hc = el('div', 'header-controls');
+  const undoBtn = button('\u21B6 Undo', 'btn', undo); undoBtn.disabled = undoStack.length === 0; undoBtn.title = 'Undo (Ctrl+Z)';
+  const redoBtn = button('\u21B7 Redo', 'btn', redo); redoBtn.disabled = redoStack.length === 0; redoBtn.title = 'Redo (Ctrl+Y or Ctrl+Shift+Z)';
+  hc.appendChild(undoBtn); hc.appendChild(redoBtn);
   hc.appendChild(button('Load DECEIT.DNG', 'btn', loadDng));
   hc.appendChild(button('Load Map (.json)', 'btn', loadMap));
   hc.appendChild(button('Save Map', 'btn btn-primary', saveMap));
@@ -1026,6 +1087,8 @@ function render() {
   // Sub-tile zoom modal (open only while a valid floor cell is selected via Detail / Zoom).
   if (state.zoomCell != null && curLevel().cells[state.zoomCell] === CELL.FLOOR) root.appendChild(buildZoomOverlay());
   else state.zoomCell = null;
+
+  recordHistory();   // capture any discrete map edit that led to this rebuild
 }
 
 // ---- Sub-tile zoom editor --------------------------------------------------
@@ -1303,6 +1366,17 @@ window.addEventListener('pointerup', stopPaint);
 window.addEventListener('pointercancel', stopPaint);
 window.addEventListener('blur', stopPaint);
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.zoomCell != null) closeZoom(); });
+
+// Standard Windows undo/redo hotkeys: Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo.
+// Ignored while typing in a form field so the native text undo keeps working there.
+window.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+  else if (k === 'y' && !e.shiftKey) { e.preventDefault(); redo(); }
+});
 
 window.addEventListener('DOMContentLoaded', render);
 // In case the script runs after DOMContentLoaded already fired:

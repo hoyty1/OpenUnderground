@@ -9,7 +9,7 @@ step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.11.0.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.12.0.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 
@@ -34,6 +34,10 @@ immediately.
 | **Erase** | Hold and drag to clear cells back to empty (floor/wall/textures/object/fountain/border/stair). |
 
 Click a cell to paint; hold and drag to paint many (point tools — object, fountain, spawn, wrap, stair — act on the initial press only). Switch levels with the tabs across the top.
+
+### Undo / redo
+
+Every map edit is undoable with the standard Windows hotkeys: **Ctrl+Z** to undo and **Ctrl+Y** (or **Ctrl+Shift+Z**) to redo. The **↶ Undo** / **↷ Redo** buttons in the header do the same and grey out when there is nothing to undo/redo. A whole hold-and-drag stroke counts as **one** undo step, and every discrete change — texture pickers, dungeon/floor/room defaults, grid resize, wrap-border and staircase edits, and all sub-tile zoom painting — is captured too (up to 80 steps). Undo/redo change only the map, never the current level, selection or open zoom view, so the editor never jumps around under you. History is cleared when you load a different map. The hotkeys are ignored while you're typing in a number or dropdown field so those keep their native text-undo behaviour.
 
 ### Texture capacity (per level)
 
