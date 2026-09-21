@@ -9,7 +9,7 @@ step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.9.0.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.10.0.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 
@@ -45,6 +45,25 @@ pure black at load (wall texture 64, floor texture 26); the picker flags these s
 render solid black in-game. **Hover any texture swatch** (in the palette pickers or the zoom
 sub-texture pickers) to see a large 256×256 enlargement so you can tell similar textures apart.
 
+## Dungeon & floor defaults
+
+Ceiling height, wall texture and floor texture each resolve through a three-level **cascade**,
+so you set a value once and override it only where it differs:
+
+1. **Dungeon default** — the **Dungeon Defaults** panel at the top of the right inspector sets
+   one height, wall texture and floor texture for the whole dungeon.
+2. **Floor default** — the **Floor Defaults — Level N** panel overrides any of the three for the
+   current level. Leave a value on **Inherit** to keep using the dungeon default.
+3. **Room / cell** — inside the **Detail / Zoom** modal, cell height and per-tile textures
+   override the floor default for that one cell, and each structural wall you draw can take its
+   own wall texture. Anything left on Inherit falls through to the floor default, then the
+   dungeon default.
+
+A newly drawn structural wall starts on **Inherit**, so it immediately shows the floor's default
+wall texture; assign a specific texture only where you want that wall to differ. The cascade is
+stored losslessly in the sidecar (an inherited value is written as 0/-1), so re-editing a saved
+map keeps every default intact.
+
 ## Sub-tile detail & height
 
 Each map cell is rendered in-game as an **11×11 grid of engine tiles**. The **Detail / Zoom**
@@ -61,9 +80,12 @@ tool exposes that grid so you can go finer than a whole cell:
   A solid sub-tile becomes an engine tile of type 0: it renders no floor, the open tiles around
   it draw full-height wall faces against it, and the mesh collider blocks it — so a single map
   cell can hold an L-shape, a diagonal, a pillar, or any other shape instead of a plain square.
-  To *texture* an interior wall face, paint a **Wall sub-texture** on the open tile next to the
-  solid area (the engine draws the face from the open side). Solid sub-tiles stay visible in
-  every zoom mode so the room outline is always clear.
+  Each solid sub-tile carries its **own wall texture** — click a solid sub-tile with the picker
+  to skin its structural wall face. A newly drawn wall starts out **Inherit**, meaning it uses
+  the floor's default wall texture (which itself inherits the dungeon default) until you assign
+  a specific one. Solid sub-tiles stay visible in every zoom mode so the room outline is always
+  clear. (You can also paint a **Wall sub-texture** on the open tile next to a solid area for the
+  older per-face method; a hand-painted sub-texture still wins over the structural texture.)
 - **Cell height (4–16)** — sets how tall the cell's walls are, and the **ceiling drops to match**.
   Where a shorter cell sits beside a taller one, a vertical **soffit** is emitted to close the
   ceiling step so there is no gap. 16 is the default full height (stored as 0 in the sidecar);
@@ -91,13 +113,19 @@ to close it.
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "tilesPerCell": 11,
+  "defaultHeight": 0,                                // dungeon-wide ceiling height 4-16 (0 = 16, classic full height)
+  "defaultWallTex": 0,                               // dungeon-wide default wall, 1-based (0 = engine default wall)
+  "defaultFloorTex": 0,                              // dungeon-wide default floor, 1-based (0 = gold/black checkerboard)
   "levels": [
     {
       "index": 0,
       "width": 8,
       "height": 8,
+      "defaultHeight": 0,                           // per-floor height override: 0 = inherit dungeon, else 4-16
+      "defaultWallTex": 0,                          // per-floor wall override: 0 = inherit dungeon, 1 = engine default, n>=2 = wallMat (n-2)
+      "defaultFloorTex": 0,                         // per-floor floor override: 0 = inherit dungeon, 1 = checkerboard, n>=2 = floorMat (n-2)
       "cells":    [0,1,2, ...],                     // 0=empty 1=floor 2=wall, row-major
       "wallTex":  [-1,-1,17, ...],                  // per-cell wall texture 0-209, -1 = engine default
       "floorTex": [-1,3,-1, ...],                   // per-cell floor texture 0-51, -1 = gold/black checkerboard
@@ -108,7 +136,8 @@ to close it.
           "cell": 17,                               // cell index (y*width + x), row-major
           "floor": [-1,-1,3, ...],                   // 121 entries, floor texture 0-51 or -1; sub-row 0 = north, sub-col 0 = west
           "wall":  [-1,17,-1, ...],                  // 121 entries, wall texture 0-209 or -1; same layout
-          "solid": [0,0,1, ...]                      // 121 entries, 1 = carved interior wall/void, 0 = open floor; same layout (omitted when all 0)
+          "solid": [0,0,1, ...],                     // 121 entries, 1 = carved interior wall/void, 0 = open floor; same layout (omitted when all 0)
+          "solidTex": [-1,-1,17, ...]                // 121 entries, parallel to solid[]; wall texture 0-209 for that structural wall, -1 = inherit floor default wall (omitted when all -1)
         }
       ],
       "objects":  [ { "type": 302, "x": 4, "y": 4 } ], // decorative objects; type = OBJECTS.GR sprite index
@@ -132,8 +161,11 @@ array the same length as `cells` (0 = default full height of 16). `subtiles` is 
 list — only cells that actually have sub-tile overrides appear, each with full-length 121-entry
 `floor`/`wall` arrays (sub-row 0 = north, sub-col 0 = west, matching the engine's tile flip). The
 optional `solid` array (same 121-entry layout) carves non-square rooms: a `1` marks a sub-tile as
-full-height interior wall/void (engine tile type 0). Older sidecars without these keys still load —
-missing fields fall back to defaults.
+full-height interior wall/void (engine tile type 0). The parallel `solidTex` array skins each
+structural wall (`-1` = inherit the floor default wall). The top-level and per-level
+`defaultHeight` / `defaultWallTex` / `defaultFloorTex` fields carry the defaults cascade (see
+[Dungeon & floor defaults](#dungeon--floor-defaults)). Older sidecars without these keys still
+load — missing fields fall back to defaults.
 
 ## Run from source
 

@@ -48,7 +48,10 @@ public static class DeceitLoader
     // = "no sub override" (fall back to the cell's uniform floor / neighbour wall default).
     // solid (sidecar version 5): length-121 array, 1 = carved interior wall/void (tile type 0,
     // no floor; open neighbours draw full-height faces + collision), 0/absent = normal floor.
-    [Serializable] public class DeceitSubtile { public int cell; public int[] floor; public int[] wall; public int[] solid; }
+    // solidTex (sidecar version 6): length-121, parallel to solid[]. For each carved solid
+    // sub-tile it is the wallMat index to skin that structural wall face with, or -1 = inherit
+    // the floor's (level's) default wall texture. Absent/null = every wall inherits.
+    [Serializable] public class DeceitSubtile { public int cell; public int[] floor; public int[] wall; public int[] solid; public int[] solidTex; }
     [Serializable] public class DeceitLevel
     {
         public int index, width, height;
@@ -72,8 +75,21 @@ public static class DeceitLoader
         //   otherwise the ceiling/wall height in 1..16 units (JsonUtility reports absent as 0).
         public int[] cellHeight;
         public DeceitSubtile[] subtiles;   // sparse: only cells painted in the zoom editor
+        // ---- Per-floor default overrides (sidecar version 6) ----
+        // Each overrides the dungeon-wide default for this floor. JsonUtility reports an absent
+        // scalar as 0, so the encodings below all treat 0 as "inherit the dungeon default".
+        //   defaultHeight  : 0 = inherit dungeon, else the ceiling height 4..16.
+        //   defaultWallTex : 0 = inherit dungeon, 1 = engine default wall, n>=2 = wallMat (n-2).
+        //   defaultFloorTex: 0 = inherit dungeon, 1 = gold/black checkerboard, n>=2 = floorMat (n-2).
+        public int defaultHeight;
+        public int defaultWallTex;
+        public int defaultFloorTex;
     }
-    [Serializable] public class DeceitMap { public int version, tilesPerCell; public DeceitLevel[] levels; }
+    // ---- Dungeon-wide defaults (sidecar version 6, top level) ----
+    //   defaultHeight  : 0 = 16 (classic full height), else 4..16.
+    //   defaultWallTex : 0 = engine default wall, n>=1 = wallMat (n-1).
+    //   defaultFloorTex: 0 = gold/black checkerboard, n>=1 = floorMat (n-1).
+    [Serializable] public class DeceitMap { public int version, tilesPerCell; public DeceitLevel[] levels; public int defaultHeight; public int defaultWallTex; public int defaultFloorTex; }
 
     // ---- Deceit per-level texture palettes (consumed by LevelGeometry) --------------------
     // The engine mesh has a fixed 48 wall + 10 floor material slots. In Deceit mode we pack
@@ -231,6 +247,17 @@ public static class DeceitLoader
         level.ResizeTiles(gw, gh);
         InitSolid(level, gw, gh);
 
+        // ---- Resolve the height / wall / floor default cascade for this floor -----------
+        // dungeon-wide default (top-level sidecar) -> per-floor override -> per-cell/per-wall.
+        DeceitMap map = LoadMap();
+        int mapDefH     = (map != null && map.defaultHeight     > 0) ? Mathf.Clamp(map.defaultHeight, 4, 16) : 16;
+        int mapDefWall  = (map != null && map.defaultWallTex    > 0) ? map.defaultWallTex  - 1 : -1; // -1 = engine default wall
+        int mapDefFloor = (map != null && map.defaultFloorTex   > 0) ? map.defaultFloorTex - 1 : -1; // -1 = checkerboard
+        int lvlDefH     = sc.defaultHeight    > 0 ? Mathf.Clamp(sc.defaultHeight, 4, 16) : mapDefH;
+        // Per-floor tex: 0 = inherit dungeon, 1 = engine default/checker (-1), n>=2 = tex (n-2).
+        int lvlDefWall  = sc.defaultWallTex  == 0 ? mapDefWall  : (sc.defaultWallTex  == 1 ? -1 : sc.defaultWallTex  - 2);
+        int lvlDefFloor = sc.defaultFloorTex == 0 ? mapDefFloor : (sc.defaultFloorTex == 1 ? -1 : sc.defaultFloorTex - 2);
+
         // ---- Build the per-level texture palettes from the sidecar overrides ----------
         // wallMat has 210 entries, floorMat has 52 (see LevelLoader.CreateWallAndFloorMaterials);
         // we map the distinct chosen indices into the fixed 48 wall / 10 floor mesh slots.
@@ -301,13 +328,20 @@ public static class DeceitLoader
                 int code = sc.cells[cy * cw + cx];
                 bool isPassable = code == 1; // 0=empty, 1=floor, 2=wall — only floor is walkable
 
-                // Resolve this floor cell's explicit floor texture -> a uniform slot (or -1).
+                // Resolve this floor cell's floor texture -> a uniform slot (or -1). An explicit
+                // per-cell floorTex wins; otherwise the cell inherits the floor default (which
+                // itself inherits the dungeon default), and -1 falls through to the checkerboard.
                 int floorSlot = -1;
-                if (isPassable && haveFloorTex)
-                    floorSlot = floorSlotFor(sc.floorTex[cy * cw + cx]);
+                if (isPassable)
+                {
+                    int fv = (haveFloorTex && sc.floorTex[cy * cw + cx] >= 0)
+                        ? sc.floorTex[cy * cw + cx] : lvlDefFloor;
+                    floorSlot = floorSlotFor(fv);
+                }
 
-                // Per-cell ceiling height (0 = default 16), applied to every floor tile of the cell.
-                int cellCeil = 16;
+                // Per-cell ceiling height: explicit cellHeight wins, else the floor default
+                // (which inherits the dungeon default). Applied to every floor tile of the cell.
+                int cellCeil = lvlDefH;
                 if (isPassable && haveCellHeight)
                 {
                     int hv = sc.cellHeight[cy * cw + cx];
@@ -377,10 +411,10 @@ public static class DeceitLoader
                     int uxBase = cx * TilesPerCell;
                     int uyBase = (ch - 1 - cy) * TilesPerCell;
 
-                    int nMat = WallTexOfCell(sc, cx, cy - 1, cw, ch); // north neighbour
-                    int sMat = WallTexOfCell(sc, cx, cy + 1, cw, ch); // south neighbour
-                    int wMat = WallTexOfCell(sc, cx - 1, cy, cw, ch); // west neighbour
-                    int eMat = WallTexOfCell(sc, cx + 1, cy, cw, ch); // east neighbour
+                    int nMat = WallTexOfCell(sc, cx, cy - 1, cw, ch, lvlDefWall); // north neighbour
+                    int sMat = WallTexOfCell(sc, cx, cy + 1, cw, ch, lvlDefWall); // south neighbour
+                    int wMat = WallTexOfCell(sc, cx - 1, cy, cw, ch, lvlDefWall); // west neighbour
+                    int eMat = WallTexOfCell(sc, cx + 1, cy, cw, ch, lvlDefWall); // east neighbour
 
                     // North neighbour -> top row of block (dy = TPC-1); South -> bottom (dy = 0).
                     if (nMat >= 0)
@@ -412,8 +446,47 @@ public static class DeceitLoader
             }
         }
 
+        // ---- Structural-wall textures: every carved solid sub-tile (a void) shows a wall face
+        // on its OPEN orthogonal neighbours. Paint those neighbours with the solid tile's chosen
+        // wall texture (solidTex), or the floor's default wall when it inherits (-1). Runs after
+        // the neighbour-cell pass (structural walls are more specific) but before explicit
+        // sub-wall painting below (a hand-painted wall sub-texture still wins). NOTE: a tile has
+        // one wallTexture shared by all its faces, so a tile wedged between two differently
+        // textured structural walls shows a single texture on both faces (documented limit). ----
+        if (sc.subtiles != null)
+        {
+            int tgw = level.tiles.GetLength(0), tgh = level.tiles.GetLength(1);
+            foreach (DeceitSubtile st in sc.subtiles)
+            {
+                if (st == null || st.solid == null) continue;
+                int scx = st.cell % cw;
+                int scy = st.cell / cw;
+                if (scx < 0 || scx >= cw || scy < 0 || scy >= ch) continue;
+                if (sc.cells[scy * cw + scx] != 1) continue; // only floor cells carve walls
+                int uxBase = scx * TilesPerCell;
+                int uyBase = (ch - 1 - scy) * TilesPerCell;
+                for (int dy = 0; dy < TilesPerCell; dy++)
+                {
+                    for (int dx = 0; dx < TilesPerCell; dx++)
+                    {
+                        int subIdx = (TilesPerCell - 1 - dy) * TilesPerCell + dx;
+                        if (subIdx >= st.solid.Length || st.solid[subIdx] != 1) continue;
+                        int tex = (st.solidTex != null && subIdx < st.solidTex.Length && st.solidTex[subIdx] >= 0)
+                            ? st.solidTex[subIdx] : lvlDefWall;
+                        if (tex < 0) continue;               // inherits engine default wall (slot 0)
+                        int slot = wallSlotFor(tex);
+                        int ex = uxBase + dx, ey = uyBase + dy; // the void (solid) tile
+                        SetOpenNeighbourWall(level, ex - 1, ey, slot, tgw, tgh);
+                        SetOpenNeighbourWall(level, ex + 1, ey, slot, tgw, tgh);
+                        SetOpenNeighbourWall(level, ex, ey - 1, slot, tgw, tgh);
+                        SetOpenNeighbourWall(level, ex, ey + 1, slot, tgw, tgh);
+                    }
+                }
+            }
+        }
+
         // ---- Sub-tile wall overrides: individual wall faces painted in the zoom editor win
-        // over the neighbour-cell defaults set above. ----
+        // over the neighbour-cell and structural-wall defaults set above. ----
         if (sc.subtiles != null)
         {
             foreach (DeceitSubtile st in sc.subtiles)
@@ -545,16 +618,30 @@ public static class DeceitLoader
     }
 
     /// <summary>
-    /// Returns the wallMat index authored for the cell at (cx,cy), or -1 when that cell is
-    /// out of bounds, is not an explicit wall cell (code 2), or has no texture override.
+    /// Returns the wallMat index for the wall face a floor cell renders toward neighbour (cx,cy):
+    /// an explicit wall-cell texture wins; any other solid neighbour (empty rock, untextured
+    /// wall, or out of bounds) falls back to lvlDefWall (the floor's default wall, -1 = engine
+    /// default). A floor neighbour (code 1) returns -1 because no wall face is drawn there.
     /// </summary>
-    private static int WallTexOfCell(DeceitLevel sc, int cx, int cy, int cw, int ch)
+    private static int WallTexOfCell(DeceitLevel sc, int cx, int cy, int cw, int ch, int lvlDefWall)
     {
-        if (cx < 0 || cx >= cw || cy < 0 || cy >= ch) return -1;
+        if (cx < 0 || cx >= cw || cy < 0 || cy >= ch) return lvlDefWall; // solid boundary rock
         int i = cy * cw + cx;
-        if (sc.cells[i] != 2) return -1;                    // only explicit wall cells carry a texture
-        if (sc.wallTex == null || i >= sc.wallTex.Length) return -1;
-        return sc.wallTex[i];                               // may be -1 (default wall)
+        if (sc.cells[i] == 1) return -1;                    // open floor neighbour: no wall face
+        if (sc.wallTex != null && i < sc.wallTex.Length && sc.wallTex[i] >= 0)
+            return sc.wallTex[i];                           // explicit wall-cell texture wins
+        return lvlDefWall;                                  // untextured wall / empty -> floor default
+    }
+
+    /// <summary>
+    /// Sets wallTexture on the tile at (x,y) only when it is in bounds and OPEN (type != 0),
+    /// i.e. a floor tile that actually renders a wall face toward an adjacent structural void.
+    /// </summary>
+    private static void SetOpenNeighbourWall(Level level, int x, int y, int slot, int gw, int gh)
+    {
+        if (x < 0 || y < 0 || x >= gw || y >= gh) return;
+        Tile t = level.tiles[x, y];
+        if (t != null && t.type != 0) t.wallTexture = slot;
     }
 
     /// <summary>Fills every tile of the level with a solid (type 0) wall tile.</summary>

@@ -262,3 +262,24 @@ body {
 .subcell-open { opacity: 0.85; }
 .zoom-solid-info { font-size: 12px; color: #c9c9c9; line-height: 1.5; }
 .zoom-solid-info p { margin: 0 0 10px; }
+
+/* ---- Dungeon / Floor defaults (right inspector) ---- */
+.defaults-section { border-bottom: 1px solid #2c2c2c; padding-bottom: 14px; margin-bottom: 14px; }
+.defaults-section h2 { margin: 14px 0 4px; }
+.defaults-section h2:first-child { margin-top: 0; }
+.def-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.def-label { min-width: 92px; font-size: 12px; color: #cccccc; }
+.def-swatch {
+  width: 34px; height: 34px; flex-shrink: 0; border: 2px solid #444; border-radius: 4px;
+  cursor: pointer; background-color: #141414; background-size: 100% 100%;
+}
+.def-swatch:hover { border-color: #d9b64e; }
+.def-swatch-none {
+  background-image:
+    linear-gradient(45deg, #c8a52e 25%, transparent 25%, transparent 75%, #c8a52e 75%),
+    linear-gradient(45deg, #c8a52e 25%, #141414 25%, #141414 75%, #c8a52e 75%);
+  background-size: 12px 12px; background-position: 0 0, 6px 6px; background-color: #141414;
+}
+.def-cur { flex: 1; font-size: 11px; color: #9a9a9a; }
+.btn-xs { padding: 3px 9px; font-size: 11px; }
+.tex-picker-modal { max-height: 80vh; overflow-y: auto; max-width: 560px; }

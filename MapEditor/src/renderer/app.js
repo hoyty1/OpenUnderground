@@ -89,6 +89,11 @@ function blankLevel(w = DEFAULT_W, h = DEFAULT_H) {
     subFloor: {},                         // sparse: cellIdx -> Array(121) floorMat idx (-1 = none), sub-row 0 = north
     subWall: {},                          // sparse: cellIdx -> Array(121) wallMat idx (-1 = none), sub-row 0 = north
     subSolid: {},                         // sparse: cellIdx -> Array(121) 0/1 (1 = interior wall/void), sub-row 0 = north
+    subSolidTex: {},                      // sparse: cellIdx -> Array(121) wallMat idx (-1 = inherit level default wall), for structural walls
+    // Per-level defaults (override the dungeon-wide defaults for this floor):
+    defaultHeight: 0,                     // 0 = inherit dungeon default, else 4..16
+    defaultWallTex: -2,                   // -2 = inherit dungeon default, -1 = engine default wall, 0..209 = texture
+    defaultFloorTex: -2,                  // -2 = inherit dungeon default, -1 = checkerboard, 0..51 = texture
     fountains: [], spawn: null, wrapBorders: [], nextBorderId: 1, stairs: [], nextStairId: 1
   };
 }
@@ -105,6 +110,8 @@ function defaultLevels() {
 
 const state = {
   levels: defaultLevels(),
+  // Dungeon-wide defaults; a floor (level) or a room (cell) may override each of these.
+  mapDefaults: { height: 16, wallTex: -1, floorTex: -1 }, // height 4..16; wall/floorTex: -1 = engine default, 0..N = texture
   level: 0,
   tool: 'floor',
   loadedDir: null,   // directory of the last opened/saved file (for the .json sidecar)
@@ -117,6 +124,7 @@ const state = {
   zoomCell: null,    // cell idx currently open in the sub-tile zoom editor (null = closed)
   zoomMode: 'floor', // 'floor' | 'wall' — which sub-layer the zoom editor paints
   zoomErase: false,  // when true, zoom painting clears the sub override (-1)
+  zoomSolidTex: -1,  // wall texture for NEW structural walls: -1 = inherit floor default wall, 0..N = explicit
   zoomPainting: false, zoomStroke: null,
   status: 'Level 1 pre-loaded from the original Deceit dungeon. Resize the grid to draw larger layouts; paint with the palette on the left.'
 };
@@ -173,7 +181,7 @@ function resizeLevel(lv, nw, nh) {
   const nwt = new Array(nw * nh).fill(-1);
   const nft = new Array(nw * nh).fill(-1);
   const nch = new Array(nw * nh).fill(0);
-  const nsf = {}, nsw = {}, nss = {};
+  const nsf = {}, nsw = {}, nss = {}, nsst = {};
   const cw = Math.min(nw, lv.width), ch = Math.min(nh, lv.height);
   for (let y = 0; y < ch; y++)
     for (let x = 0; x < cw; x++) {
@@ -185,6 +193,7 @@ function resizeLevel(lv, nw, nh) {
       if (lv.subFloor[oi]) nsf[ni] = lv.subFloor[oi];
       if (lv.subWall[oi]) nsw[ni] = lv.subWall[oi];
       if (lv.subSolid[oi]) nss[ni] = lv.subSolid[oi];
+      if (lv.subSolidTex[oi]) nsst[ni] = lv.subSolidTex[oi];
     }
   const nobj = [];
   lv.objects.forEach(o => { const p = xy(lv, o.index); if (p.x < nw && p.y < nh) nobj.push({ type: o.type, index: p.y * nw + p.x }); });
@@ -208,7 +217,7 @@ function resizeLevel(lv, nw, nh) {
   });
   const lvIndex = state.levels.indexOf(lv);
   lv.width = nw; lv.height = nh; lv.cells = nc; lv.wallTex = nwt; lv.floorTex = nft; lv.objects = nobj; lv.fountains = nf; lv.spawn = ns; lv.wrapBorders = nb; lv.stairs = nst;
-  lv.cellHeight = nch; lv.subFloor = nsf; lv.subWall = nsw; lv.subSolid = nss;
+  lv.cellHeight = nch; lv.subFloor = nsf; lv.subWall = nsw; lv.subSolid = nss; lv.subSolidTex = nsst;
   removed.forEach(id => unlinkReferences(lv, id));
   removedStairs.forEach(id => unlinkStairReferences(lvIndex, id));
 }
@@ -225,7 +234,7 @@ function applyTool(idx) {
       break;
     case 'wall':
       lv.cells[idx] = CELL.WALL;
-      delete lv.subFloor[idx]; delete lv.subWall[idx]; delete lv.subSolid[idx]; lv.cellHeight[idx] = 0; // wall clears floor detail
+      delete lv.subFloor[idx]; delete lv.subWall[idx]; delete lv.subSolid[idx]; delete lv.subSolidTex[idx]; lv.cellHeight[idx] = 0; // wall clears floor detail
       { const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1); } // wall can't hold a fountain
       { const o = objectAt(lv, idx); if (o >= 0) lv.objects.splice(o, 1); }     // wall can't hold an object
       if (lv.spawn === idx) { lv.spawn = null; structural = true; }           // wall can't hold a spawn
@@ -295,7 +304,7 @@ function applyTool(idx) {
     case 'erase': {
       lv.cells[idx] = CELL.EMPTY;
       lv.wallTex[idx] = -1; lv.floorTex[idx] = -1;
-      delete lv.subFloor[idx]; delete lv.subWall[idx]; delete lv.subSolid[idx]; lv.cellHeight[idx] = 0;
+      delete lv.subFloor[idx]; delete lv.subWall[idx]; delete lv.subSolid[idx]; delete lv.subSolidTex[idx]; lv.cellHeight[idx] = 0;
       { const o = objectAt(lv, idx); if (o >= 0) lv.objects.splice(o, 1); }
       const f = fountainAt(lv, idx); if (f >= 0) lv.fountains.splice(f, 1);
       if (lv.spawn === idx) { lv.spawn = null; structural = true; }
@@ -337,6 +346,12 @@ function stopPaint() { state.painting = false; state.strokeCells = null; state.z
 function buildLevelsFromSidecar(json) {
   const src = Array.isArray(json.levels) ? json.levels : [];
   const levels = [];
+  // Dungeon-wide defaults (top-level; absent = engine defaults). height: 0/absent -> 16.
+  state.mapDefaults = {
+    height: (Number.isFinite(json.defaultHeight) && json.defaultHeight > 0) ? Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, json.defaultHeight)) : 16,
+    wallTex: (Number.isFinite(json.defaultWallTex) && json.defaultWallTex > 0) ? json.defaultWallTex - 1 : -1,
+    floorTex: (Number.isFinite(json.defaultFloorTex) && json.defaultFloorTex > 0) ? json.defaultFloorTex - 1 : -1
+  };
   for (let i = 0; i < LEVELS; i++) {
     const jl = src.find(l => l.index === i) || src[i];
     if (jl && Array.isArray(jl.cells)) {
@@ -346,12 +361,17 @@ function buildLevelsFromSidecar(json) {
       if (Array.isArray(jl.wallTex)) for (let k = 0; k < Math.min(jl.wallTex.length, w * h); k++) lv.wallTex[k] = jl.wallTex[k];
       if (Array.isArray(jl.floorTex)) for (let k = 0; k < Math.min(jl.floorTex.length, w * h); k++) lv.floorTex[k] = jl.floorTex[k];
       if (Array.isArray(jl.cellHeight)) for (let k = 0; k < Math.min(jl.cellHeight.length, w * h); k++) lv.cellHeight[k] = jl.cellHeight[k] || 0;
+      // Per-floor default overrides (0/absent = inherit dungeon).
+      lv.defaultHeight = (Number.isFinite(jl.defaultHeight) && jl.defaultHeight > 0) ? Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, jl.defaultHeight)) : 0;
+      lv.defaultWallTex = decodeLevelDef(jl.defaultWallTex);
+      lv.defaultFloorTex = decodeLevelDef(jl.defaultFloorTex);
       (jl.subtiles || []).forEach(st => {
         if (!st || !Number.isFinite(st.cell) || st.cell < 0 || st.cell >= w * h) return;
         const N = TILES_PER_CELL * TILES_PER_CELL;
         if (Array.isArray(st.floor) && st.floor.some(v => v >= 0)) { const a = new Array(N).fill(-1); for (let k = 0; k < Math.min(st.floor.length, N); k++) a[k] = st.floor[k]; lv.subFloor[st.cell] = a; }
         if (Array.isArray(st.wall) && st.wall.some(v => v >= 0)) { const a = new Array(N).fill(-1); for (let k = 0; k < Math.min(st.wall.length, N); k++) a[k] = st.wall[k]; lv.subWall[st.cell] = a; }
         if (Array.isArray(st.solid) && st.solid.some(v => v === 1)) { const a = new Array(N).fill(0); for (let k = 0; k < Math.min(st.solid.length, N); k++) a[k] = st.solid[k] === 1 ? 1 : 0; lv.subSolid[st.cell] = a; }
+        if (Array.isArray(st.solidTex) && st.solidTex.some(v => v >= 0)) { const a = new Array(N).fill(-1); for (let k = 0; k < Math.min(st.solidTex.length, N); k++) a[k] = st.solidTex[k]; lv.subSolidTex[st.cell] = a; }
       });
       lv.ceilTex = (Number.isFinite(jl.ceilTex) && jl.ceilTex > 0) ? (jl.ceilTex - 1) : null; // sidecar ceilTex is 1-based (0 = engine default)
       (jl.objects || []).forEach(o => { if (o.x < w && o.y < h) lv.objects.push({ type: o.type, index: o.y * w + o.x }); });
@@ -453,8 +473,12 @@ function buildDngBuffer() {
 
 function buildSidecar() {
   return {
-    version: 5,
+    version: 6,
     tilesPerCell: TILES_PER_CELL,
+    // Dungeon-wide defaults (JsonUtility-safe; 0 = engine default). height: 0 = 16.
+    defaultHeight: state.mapDefaults.height === 16 ? 0 : state.mapDefaults.height,
+    defaultWallTex: state.mapDefaults.wallTex < 0 ? 0 : state.mapDefaults.wallTex + 1,
+    defaultFloorTex: state.mapDefaults.floorTex < 0 ? 0 : state.mapDefaults.floorTex + 1,
     levels: state.levels.map((lv, index) => {
       const out = {
         index,
@@ -464,6 +488,9 @@ function buildSidecar() {
         wallTex: lv.wallTex.slice(),           // per-cell wall texture (0-209, -1 = engine default)
         floorTex: lv.floorTex.slice(),         // per-cell floor texture (0-51, -1 = gold/black checkerboard)
         ceilTex: lv.ceilTex == null ? 0 : lv.ceilTex + 1,  // level-wide ceiling, 1-based (0 = engine default)
+        defaultHeight: lv.defaultHeight,                   // per-floor ceiling height, 0 = inherit dungeon
+        defaultWallTex: encodeLevelDef(lv.defaultWallTex), // per-floor default wall tex (0 = inherit, 1 = engine default, n = tex n-2)
+        defaultFloorTex: encodeLevelDef(lv.defaultFloorTex),// per-floor default floor tex (0 = inherit, 1 = checkerboard, n = tex n-2)
         objects: lv.objects.map(o => ({ type: o.type, ...xy(lv, o.index) })),
         cellHeight: lv.cellHeight.slice(),     // per-cell height, 0 = default 16 (row-major, aligned to cells)
         subtiles: buildSubtiles(lv),           // sparse per-cell 11×11 floor/wall sub-texture overrides
@@ -499,6 +526,9 @@ function texCapWarnings() {
     lv.floorTex.forEach(t => { if (t >= 0) f.add(t); });
     Object.values(lv.subWall).forEach(a => a.forEach(t => { if (t >= 0) w.add(t); }));   // sub-tile walls count too
     Object.values(lv.subFloor).forEach(a => a.forEach(t => { if (t >= 0) f.add(t); })); // sub-tile floors count too
+    Object.values(lv.subSolidTex).forEach(a => a.forEach(t => { if (t >= 0) w.add(t); })); // structural-wall textures count too
+    const lw = levelWallTex(lv); if (lw >= 0) w.add(lw);   // effective floor default wall occupies a slot
+    const lf = levelFloorTex(lv); if (lf >= 0) f.add(lf);  // effective floor default floor occupies a slot
     if (w.size > MAX_WALL_TEX) bad.push('L' + (li + 1) + ': ' + w.size + ' distinct wall textures (max ' + MAX_WALL_TEX + ')');
     if (f.size > MAX_FLOOR_TEX) bad.push('L' + (li + 1) + ': ' + f.size + ' distinct floor textures (max ' + MAX_FLOOR_TEX + ')');
   });
@@ -580,7 +610,7 @@ function cellClass(lv, idx) {
   if (lv.spawn === idx) cls.push('cell-spawn');
   if (borderAt(lv, idx)) cls.push('cell-border');
   if (stairAt(lv, idx)) cls.push('cell-stair');
-  if ((lv.subFloor && (lv.subFloor[idx] || lv.subWall[idx])) || (lv.subSolid && lv.subSolid[idx]) || (lv.cellHeight && lv.cellHeight[idx] > 0)) cls.push('cell-detail');
+  if ((lv.subFloor && (lv.subFloor[idx] || lv.subWall[idx])) || (lv.subSolid && lv.subSolid[idx]) || (lv.subSolidTex && lv.subSolidTex[idx]) || (lv.cellHeight && lv.cellHeight[idx] > 0)) cls.push('cell-detail');
   if (state.selected === idx) cls.push('selected');
   return cls.join(' ');
 }
@@ -591,11 +621,14 @@ function fillCell(node, lv, idx) {
   node.style.height = cellPx + 'px';
   node.textContent = '';
   // Textured cells paint their texture image over the default checkerboard / brick.
-  if (lv.cells[idx] === CELL.WALL && lv.wallTex[idx] >= 0) {
-    node.style.backgroundImage = 'url("' + wallThumb(lv.wallTex[idx]) + '")';
+  // Effective texture cascades cell -> level default -> dungeon default.
+  const ewt = lv.cells[idx] === CELL.WALL ? cellWallTex(lv, idx) : -1;
+  const eft = lv.cells[idx] === CELL.FLOOR ? cellFloorTex(lv, idx) : -1;
+  if (ewt >= 0) {
+    node.style.backgroundImage = 'url("' + wallThumb(ewt) + '")';
     node.style.backgroundSize = '100% 100%';
-  } else if (lv.cells[idx] === CELL.FLOOR && lv.floorTex[idx] >= 0) {
-    node.style.backgroundImage = 'url("' + floorThumb(lv.floorTex[idx]) + '")';
+  } else if (eft >= 0) {
+    node.style.backgroundImage = 'url("' + floorThumb(eft) + '")';
     node.style.backgroundSize = '100% 100%';
   } else {
     node.style.backgroundImage = '';
@@ -700,6 +733,89 @@ function buildPicker() {
   }
   wrap.appendChild(grid);
   return wrap;
+}
+
+// ---- Defaults (dungeon / per-floor) inspector section ----------------------
+// A modal texture picker used by the default controls. onPick receives -2 (inherit),
+// -1 (engine default / checkerboard) or a texture index 0..N. opts: {allowInherit, allowNone, title}.
+function openTexPicker(kind, current, onPick, opts) {
+  opts = opts || {};
+  const thumb = kind === 'wall' ? wallThumb : floorThumb;
+  const count = kind === 'wall' ? WALL_TEX_COUNT : FLOOR_TEX_COUNT;
+  const black = kind === 'wall' ? BLACK_WALL_TEX : BLACK_FLOOR_TEX;
+  const ov = el('div', 'zoom-overlay');
+  const close = () => { if (ov.parentNode) ov.parentNode.removeChild(ov); };
+  ov.addEventListener('pointerdown', (e) => { if (e.target === ov) close(); });
+  const modal = el('div', 'zoom-modal tex-picker-modal');
+  const head = el('div', 'zoom-head');
+  head.appendChild(el('div', 'zoom-title', opts.title || 'Pick a texture'));
+  head.appendChild(button('Close ✕', 'btn btn-sm', close));
+  modal.appendChild(head);
+  const grid = el('div', 'tex-grid');
+  const pick = (v) => { close(); onPick(v); };
+  if (opts.allowInherit) { const s = el('div', 'tex-swatch tex-none' + (current === -2 ? ' sel' : ''), 'Inherit'); s.title = 'Inherit the dungeon default'; s.onclick = () => pick(-2); grid.appendChild(s); }
+  if (opts.allowNone) { const s = el('div', 'tex-swatch tex-none' + (current === -1 ? ' sel' : ''), kind === 'wall' ? 'Default' : 'Checker'); s.title = kind === 'wall' ? 'Engine default wall' : 'Gold/black checkerboard'; s.onclick = () => pick(-1); grid.appendChild(s); }
+  for (let i = 0; i < count; i++) {
+    const s = el('div', 'tex-swatch' + (current === i ? ' sel' : '') + (i === black ? ' tex-black' : ''));
+    const img = document.createElement('img'); img.src = thumb(i); img.alt = 'texture ' + i;
+    img.onerror = () => { s.classList.add('tex-missing'); s.textContent = String(i); };
+    s.appendChild(img); s.title = 'Texture ' + i + (i === black ? ' (renders solid black in-game)' : '');
+    s.onclick = () => pick(i);
+    attachTexPreview(s, thumb(i), (kind === 'wall' ? 'Wall' : 'Floor') + ' texture ' + i);
+    grid.appendChild(s);
+  }
+  modal.appendChild(grid);
+  ov.appendChild(modal); document.body.appendChild(ov);
+}
+function texDefLabel(kind, v) {
+  if (v === -2) return 'Inherit';
+  if (v === -1) return kind === 'wall' ? 'Engine default' : 'Checkerboard';
+  return 'Texture #' + v;
+}
+// One row: label + effective-texture swatch (click to change) + current-setting text + Change button.
+function defTexRow(labelText, kind, cur, eff, onPick, opts) {
+  const thumb = kind === 'wall' ? wallThumb : floorThumb;
+  const row = el('div', 'def-row');
+  row.appendChild(el('div', 'def-label', labelText));
+  const sw = el('div', 'def-swatch');
+  if (eff >= 0) { sw.style.backgroundImage = 'url("' + thumb(eff) + '")'; sw.style.backgroundSize = '100% 100%'; attachTexPreview(sw, thumb(eff), labelText + ' (effective)'); }
+  else sw.classList.add('def-swatch-none');
+  sw.title = 'Effective: ' + (eff >= 0 ? 'texture #' + eff : (kind === 'wall' ? 'engine default wall' : 'gold/black checkerboard')) + ' — click to change';
+  sw.onclick = () => openTexPicker(kind, cur, onPick, opts);
+  row.appendChild(sw);
+  row.appendChild(el('div', 'def-cur', texDefLabel(kind, cur)));
+  row.appendChild(button('Change', 'btn btn-xs', () => openTexPicker(kind, cur, onPick, opts)));
+  return row;
+}
+function buildDefaultsSection(lv) {
+  const sec = el('div', 'defaults-section');
+  // ---- Dungeon-wide defaults
+  sec.appendChild(el('h2', null, 'Dungeon Defaults'));
+  sec.appendChild(el('div', 'muted', 'Baseline for the whole dungeon. Any floor or individual room can override each of these.'));
+  const hrow = el('div', 'def-row');
+  hrow.appendChild(el('div', 'def-label', 'Ceiling height'));
+  const hIn = document.createElement('input'); hIn.type = 'number'; hIn.className = 'dim-input'; hIn.min = MIN_HEIGHT; hIn.max = MAX_HEIGHT; hIn.value = state.mapDefaults.height;
+  hIn.onchange = () => { let v = parseInt(hIn.value, 10); if (!Number.isFinite(v)) v = MAX_HEIGHT; v = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, v)); state.mapDefaults.height = v; render(); };
+  hrow.appendChild(hIn);
+  hrow.appendChild(el('span', 'zoom-ctl-note', MIN_HEIGHT + '–' + MAX_HEIGHT));
+  sec.appendChild(hrow);
+  sec.appendChild(defTexRow('Wall texture', 'wall', state.mapDefaults.wallTex, state.mapDefaults.wallTex, v => { state.mapDefaults.wallTex = v; render(); }, { allowNone: true, title: 'Dungeon default wall texture' }));
+  sec.appendChild(defTexRow('Floor texture', 'floor', state.mapDefaults.floorTex, state.mapDefaults.floorTex, v => { state.mapDefaults.floorTex = v; render(); }, { allowNone: true, title: 'Dungeon default floor texture' }));
+  // ---- Per-floor defaults (override the dungeon default for the current level)
+  sec.appendChild(el('h2', null, 'Floor Defaults — Level ' + (state.level + 1)));
+  sec.appendChild(el('div', 'muted', 'Override the dungeon defaults for this floor. Leave on Inherit / blank to use the dungeon default.'));
+  const fhrow = el('div', 'def-row');
+  fhrow.appendChild(el('div', 'def-label', 'Ceiling height'));
+  const fhIn = document.createElement('input'); fhIn.type = 'number'; fhIn.className = 'dim-input'; fhIn.min = MIN_HEIGHT; fhIn.max = MAX_HEIGHT;
+  fhIn.value = lv.defaultHeight > 0 ? lv.defaultHeight : '';
+  fhIn.placeholder = 'inherit (' + state.mapDefaults.height + ')';
+  fhIn.onchange = () => { let v = parseInt(fhIn.value, 10); if (!Number.isFinite(v)) { lv.defaultHeight = 0; } else { v = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, v)); lv.defaultHeight = (v === state.mapDefaults.height ? 0 : v); } render(); };
+  fhrow.appendChild(fhIn);
+  fhrow.appendChild(button('Inherit', 'btn btn-xs', () => { lv.defaultHeight = 0; render(); }));
+  sec.appendChild(fhrow);
+  sec.appendChild(defTexRow('Wall texture', 'wall', lv.defaultWallTex, levelWallTex(lv), v => { lv.defaultWallTex = v; render(); }, { allowInherit: true, allowNone: true, title: 'Floor default wall texture' }));
+  sec.appendChild(defTexRow('Floor texture', 'floor', lv.defaultFloorTex, levelFloorTex(lv), v => { lv.defaultFloorTex = v; render(); }, { allowInherit: true, allowNone: true, title: 'Floor default floor texture' }));
+  return sec;
 }
 
 // ---- Pointer interaction (event delegation on the grid) --------------------
@@ -807,6 +923,7 @@ function render() {
 
   // ---- Right inspector
   const inspector = el('div', 'inspector');
+  inspector.appendChild(buildDefaultsSection(lv));
   inspector.appendChild(el('h2', null, 'Wrap Borders \u2014 Level ' + (state.level + 1)));
   if (lv.wrapBorders.length === 0) {
     inspector.appendChild(el('div', 'muted', 'No wrap borders yet. Pick the Wrap Border tool and click edge cells. Each border needs at least one directional exit \u2014 the corridor wraps seamlessly when the player crosses that edge.'));
@@ -916,7 +1033,21 @@ function render() {
 // tile's floor and wall face individually and set the cell's height/ceiling.
 let subCellNodes = [];
 function subGet(lv, map, idx, fill) { if (fill === undefined) fill = -1; let a = map[idx]; if (!a) { a = new Array(TILES_PER_CELL * TILES_PER_CELL).fill(fill); map[idx] = a; } return a; }
-function heightOf(lv, idx) { return lv.cellHeight[idx] > 0 ? lv.cellHeight[idx] : 16; }
+// ---- Cascade resolution (dungeon default -> per-floor default -> per-cell) ----
+// Height: cell (cellHeight>0) -> level (defaultHeight>0) -> dungeon (mapDefaults.height).
+function parentHeight(lv) { return lv.defaultHeight > 0 ? lv.defaultHeight : state.mapDefaults.height; }
+function heightOf(lv, idx) { return lv.cellHeight[idx] > 0 ? lv.cellHeight[idx] : parentHeight(lv); }
+// Effective default wall/floor texture for a floor (level), inheriting the dungeon default.
+// Returns -1 = engine default (wall) / checkerboard (floor), or a texture index 0..N.
+function levelWallTex(lv) { return lv.defaultWallTex === -2 ? state.mapDefaults.wallTex : lv.defaultWallTex; }
+function levelFloorTex(lv) { return lv.defaultFloorTex === -2 ? state.mapDefaults.floorTex : lv.defaultFloorTex; }
+// Effective per-cell wall/floor texture, inheriting the level (then dungeon) default.
+function cellWallTex(lv, idx) { return lv.wallTex[idx] >= 0 ? lv.wallTex[idx] : levelWallTex(lv); }
+function cellFloorTex(lv, idx) { return lv.floorTex[idx] >= 0 ? lv.floorTex[idx] : levelFloorTex(lv); }
+// Sidecar encoding for per-level default textures (JsonUtility-safe; absent scalar = 0 = inherit dungeon):
+//   -2 (inherit dungeon) -> 0, -1 (engine default / checkerboard) -> 1, texture n -> n+2.
+function encodeLevelDef(v) { return v === -2 ? 0 : v === -1 ? 1 : v + 2; }
+function decodeLevelDef(v) { if (!Number.isFinite(v) || v === 0) return -2; if (v === 1) return -1; return v - 2; }
 // Which of the cell's four sides face a non-floor neighbour (i.e. render a wall in-game).
 function solidEdges(lv, idx) {
   const p = xy(lv, idx);
@@ -935,6 +1066,7 @@ function buildSubtiles(lv) {
     const w = lv.subWall[cell] ? lv.subWall[cell].slice() : new Array(N).fill(-1);
     const entry = { cell, floor: f, wall: w };
     if (lv.subSolid[cell] && lv.subSolid[cell].some(v => v === 1)) entry.solid = lv.subSolid[cell].slice();
+    if (lv.subSolidTex[cell] && lv.subSolidTex[cell].some(v => v >= 0)) entry.solidTex = lv.subSolidTex[cell].slice();
     out.push(entry);
   });
   return out;
@@ -948,10 +1080,15 @@ function fillSubCell(node, sr, sc) {
   const isSolid = solArr && solArr[subIdx] === 1;
   const edges = state._zoomEdges || solidEdges(lv, idx);
   const wallBearing = (sr === 0 && edges.N) || (sr === TILES_PER_CELL - 1 && edges.S) || (sc === 0 && edges.W) || (sc === TILES_PER_CELL - 1 && edges.E);
-  // A sub-tile carved solid renders as an interior wall (brick) in every mode so the room shape stays visible.
+  // A sub-tile carved solid renders as an interior wall in every mode so the room shape stays visible.
+  // Show its effective wall texture (structural-wall texture, inheriting the level default).
   if (isSolid) {
     node.classList.add('subcell-solid');
     if (state.zoomMode === 'solid') node.classList.add('subcell-solid-active');
+    const stx = lv.subSolidTex[idx];
+    const wv = stx ? stx[subIdx] : -1;
+    const eff = wv >= 0 ? wv : levelWallTex(lv);
+    if (eff >= 0) { node.style.backgroundImage = 'url("' + wallThumb(eff) + '")'; node.style.backgroundSize = '100% 100%'; }
     return;
   }
   if (state.zoomMode === 'wall') {
@@ -961,13 +1098,15 @@ function fillSubCell(node, sr, sc) {
     else node.classList.add('subcell-dim');
   } else if (state.zoomMode === 'solid') {
     // Structure mode: show a dimmed floor so open vs solid is obvious; click to carve walls.
-    if (lv.floorTex[idx] >= 0) { node.style.backgroundImage = 'url("' + floorThumb(lv.floorTex[idx]) + '")'; node.style.backgroundSize = '100% 100%'; }
+    const cft = cellFloorTex(lv, idx);
+    if (cft >= 0) { node.style.backgroundImage = 'url("' + floorThumb(cft) + '")'; node.style.backgroundSize = '100% 100%'; }
     else node.classList.add((sr + sc) % 2 ? 'subcell-gold' : 'subcell-black');
     node.classList.add('subcell-open');
   } else {
     const fv = fArr ? fArr[subIdx] : -1;
+    const cft = cellFloorTex(lv, idx);
     if (fv >= 0) { node.style.backgroundImage = 'url("' + floorThumb(fv) + '")'; node.style.backgroundSize = '100% 100%'; }
-    else if (lv.floorTex[idx] >= 0) { node.style.backgroundImage = 'url("' + floorThumb(lv.floorTex[idx]) + '")'; node.style.backgroundSize = '100% 100%'; }
+    else if (cft >= 0) { node.style.backgroundImage = 'url("' + floorThumb(cft) + '")'; node.style.backgroundSize = '100% 100%'; }
     else node.classList.add((sr + sc) % 2 ? 'subcell-gold' : 'subcell-black');
   }
   if (wallBearing) node.classList.add('subcell-edge');
@@ -977,7 +1116,9 @@ function paintSub(sr, sc) {
   const lv = curLevel(); const idx = state.zoomCell; const subIdx = sr * TILES_PER_CELL + sc;
   if (state.zoomMode === 'solid') {
     const a = subGet(lv, lv.subSolid, idx, 0);
-    a[subIdx] = state.zoomErase ? 0 : 1;
+    const tex = subGet(lv, lv.subSolidTex, idx, -1);
+    if (state.zoomErase) { a[subIdx] = 0; tex[subIdx] = -1; }
+    else { a[subIdx] = 1; tex[subIdx] = state.zoomSolidTex; }
     refreshSubCell(sr, sc);
     return;
   }
@@ -1001,17 +1142,35 @@ function closeZoom() {
   const lv = curLevel();
   [lv.subFloor, lv.subWall].forEach(map => Object.keys(map).forEach(k => { if (map[k].every(v => v < 0)) delete map[k]; }));
   Object.keys(lv.subSolid).forEach(k => { if (lv.subSolid[k].every(v => v !== 1)) delete lv.subSolid[k]; });
+  Object.keys(lv.subSolidTex).forEach(k => { if (!lv.subSolid[k] || lv.subSolidTex[k].every(v => v < 0)) delete lv.subSolidTex[k]; });
   state.zoomCell = null; state._zoomEdges = null; state.zoomPainting = false; state.zoomStroke = null; render();
 }
 function buildZoomPicker() {
   const wrap = el('div', 'zoom-picker');
   if (state.zoomMode === 'solid') {
+    const lv = curLevel();
     wrap.appendChild(el('div', 'picker-head', 'Walls (structure) — carve the room shape'));
     const info = el('div', 'zoom-solid-info');
     info.appendChild(el('p', null, 'Click or drag across the grid to toggle sub-tiles between OPEN floor and SOLID wall. Carve away the corners/edges you don’t want and the cell becomes a non-square room.'));
-    info.appendChild(el('p', null, 'Solid sub-tiles render as full-height interior walls in-game — the engine draws them and blocks movement automatically. Use the Painting/Erasing toggle to switch between carving walls and restoring floor.'));
-    info.appendChild(el('p', null, 'To skin an interior wall face, switch to Wall sub-textures and paint the OPEN tiles that sit against the solid area — the engine draws each wall face from the open side.'));
+    info.appendChild(el('p', null, 'New walls take the wall texture selected below — leave it on Inherit and they use this floor’s default wall texture. Painting over an existing solid tile re-textures it; Erasing restores floor.'));
     wrap.appendChild(info);
+    const eff = levelWallTex(lv);
+    wrap.appendChild(el('div', 'picker-head', 'Wall texture for new walls'));
+    const grid = el('div', 'tex-grid');
+    const inh = el('div', 'tex-swatch tex-none' + (state.zoomSolidTex === -1 ? ' sel' : ''), 'Inherit');
+    inh.title = 'Use this floor’s default wall texture (' + (eff >= 0 ? '#' + eff : 'engine default') + ')';
+    inh.onclick = () => { state.zoomSolidTex = -1; state.zoomErase = false; render(); };
+    grid.appendChild(inh);
+    for (let i = 0; i < WALL_TEX_COUNT; i++) {
+      const sw = el('div', 'tex-swatch' + (state.zoomSolidTex === i ? ' sel' : '') + (i === BLACK_WALL_TEX ? ' tex-black' : ''));
+      const img = document.createElement('img'); img.src = wallThumb(i); img.alt = 'texture ' + i;
+      img.onerror = () => { sw.classList.add('tex-missing'); sw.textContent = String(i); };
+      sw.appendChild(img); sw.title = 'Texture ' + i + (i === BLACK_WALL_TEX ? ' (renders solid black in-game)' : '');
+      sw.onclick = () => { state.zoomSolidTex = i; state.zoomErase = false; render(); };
+      attachTexPreview(sw, wallThumb(i), 'Wall texture ' + i);
+      grid.appendChild(sw);
+    }
+    wrap.appendChild(grid);
     return wrap;
   }
   const isWall = state.zoomMode === 'wall';
@@ -1046,13 +1205,13 @@ function buildZoomOverlay() {
   ctl.appendChild(el('span', 'zoom-ctl-label', 'Cell height:'));
   const hIn = document.createElement('input'); hIn.type = 'number'; hIn.className = 'dim-input'; hIn.min = MIN_HEIGHT; hIn.max = MAX_HEIGHT; hIn.value = heightOf(lv, idx);
   hIn.onchange = () => {
-    let v = parseInt(hIn.value, 10); if (!Number.isFinite(v)) v = MAX_HEIGHT; v = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, v)); hIn.value = v;
-    lv.cellHeight[idx] = (v === 16 ? 0 : v);
+    let v = parseInt(hIn.value, 10); if (!Number.isFinite(v)) v = parentHeight(lv); v = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, v)); hIn.value = v;
+    lv.cellHeight[idx] = (v === parentHeight(lv) ? 0 : v);
     setStatus('Cell (' + p.x + ',' + p.y + ') height set to ' + v + ' (ceiling matches; soffits close steps down to taller neighbours).');
     refreshCell(idx);
   };
   ctl.appendChild(hIn);
-  ctl.appendChild(el('span', 'zoom-ctl-note', '4–16 (16 = default full height; ceiling drops to match)'));
+  ctl.appendChild(el('span', 'zoom-ctl-note', '4–16 (' + parentHeight(lv) + ' = this floor’s default; ceiling drops to match)'));
   modal.appendChild(ctl);
   const modes = el('div', 'zoom-modes');
   [['floor', 'Floor sub-textures'], ['wall', 'Wall sub-textures'], ['solid', 'Walls (structure)']].forEach(([m, lbl]) => {
