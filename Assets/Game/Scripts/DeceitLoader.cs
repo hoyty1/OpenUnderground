@@ -46,7 +46,9 @@ public static class DeceitLoader
     // floor/wall are length TilesPerCell*TilesPerCell (121), row-major within the cell with
     // sub-row 0 = north and sub-col 0 = west. Each entry is a floorMat/wallMat index, or -1
     // = "no sub override" (fall back to the cell's uniform floor / neighbour wall default).
-    [Serializable] public class DeceitSubtile { public int cell; public int[] floor; public int[] wall; }
+    // solid (sidecar version 5): length-121 array, 1 = carved interior wall/void (tile type 0,
+    // no floor; open neighbours draw full-height faces + collision), 0/absent = normal floor.
+    [Serializable] public class DeceitSubtile { public int cell; public int[] floor; public int[] wall; public int[] solid; }
     [Serializable] public class DeceitLevel
     {
         public int index, width, height;
@@ -314,8 +316,12 @@ public static class DeceitLoader
 
                 // Sub-tile floor overrides for this cell (null = none).
                 int[] subFloor = null;
+                int[] subSolid = null;
                 if (isPassable && subMap.TryGetValue(cy * cw + cx, out DeceitSubtile subCell) && subCell != null)
+                {
                     subFloor = subCell.floor;
+                    subSolid = subCell.solid;
+                }
 
                 int uxBase = cx * TilesPerCell;
                 // Flip N/S: sidecar row 0 is north (minimap top). +z is north in-world,
@@ -331,14 +337,24 @@ public static class DeceitLoader
                         {
                             // Editor sub-grid row 0 = north = engine dy = TilesPerCell-1.
                             int subIdx = (TilesPerCell - 1 - dy) * TilesPerCell + dx;
-                            int subMat = (subFloor != null && subIdx < subFloor.Length) ? subFloor[subIdx] : -1;
-                            if (subMat >= 0)
-                                t.floorTexture = floorSlotFor(subMat);   // individual painted floor
+                            if (subSolid != null && subIdx < subSolid.Length && subSolid[subIdx] == 1)
+                            {
+                                // Carved interior wall: void tile (no floor). Adjacent open tiles
+                                // draw a full-height wall face against it and the mesh collider
+                                // blocks it, so rooms can be any shape, not just square cells.
+                                t.type = 0;
+                            }
                             else
-                                t.floorTexture = (floorSlot >= 0)
-                                    ? floorSlot            // uniform explicit floor
-                                    : (dx + dy) % 2;       // gold/black checkerboard
-                            t.ceilHeight = cellCeil;
+                            {
+                                int subMat = (subFloor != null && subIdx < subFloor.Length) ? subFloor[subIdx] : -1;
+                                if (subMat >= 0)
+                                    t.floorTexture = floorSlotFor(subMat);   // individual painted floor
+                                else
+                                    t.floorTexture = (floorSlot >= 0)
+                                        ? floorSlot            // uniform explicit floor
+                                        : (dx + dy) % 2;       // gold/black checkerboard
+                                t.ceilHeight = cellCeil;
+                            }
                         }
                     }
                 }

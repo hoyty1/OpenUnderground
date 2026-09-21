@@ -237,3 +237,28 @@ body {
   content: '\1F50D'; position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; font-size: 15px; text-shadow: 0 0 3px #000;
 }
+
+/* ---- Hover-to-enlarge texture preview ---- */
+.tex-preview {
+  position: fixed; z-index: 200; pointer-events: none;
+  background: #101010; border: 2px solid #d9b64e; border-radius: 6px;
+  padding: 6px; box-shadow: 0 8px 28px rgba(0,0,0,0.7);
+}
+.tex-preview img {
+  display: block; width: 256px; height: 256px; object-fit: fill;
+  image-rendering: pixelated; background: #000;
+}
+.tex-preview-label { margin-top: 4px; font-size: 12px; color: #d9b64e; text-align: center; }
+
+/* ---- Sub-tile "solid" interior wall (structure mode) ---- */
+.subcell-solid {
+  background-color: #6b4a2a;
+  background-image:
+    linear-gradient(#7a5631 46%, #5a3f24 54%),
+    linear-gradient(90deg, transparent 48%, #4a3320 50%, transparent 52%);
+  background-size: 100% 10px, 20px 100%;
+}
+.subcell-solid-active { box-shadow: inset 0 0 0 2px #e08a3c; }
+.subcell-open { opacity: 0.85; }
+.zoom-solid-info { font-size: 12px; color: #c9c9c9; line-height: 1.5; }
+.zoom-solid-info p { margin: 0 0 10px; }

@@ -9,7 +9,7 @@ step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.8.0.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.9.0.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 
@@ -24,7 +24,7 @@ immediately.
 | **Wall** | Paints a solid grey-brick wall cell. Hold and drag to trace rooms that aren't square. |
 | **Wall Texture** | Opens a picker of **all 210 original wall textures** (decoded from `W64.TR`). Pick one, then hold and drag over WALL cells to skin them — the wall face rendered toward an adjacent floor uses that texture. |
 | **Floor Texture** | Opens a picker of **all 52 original floor textures** (decoded from `F32.TR`). Pick one, then hold and drag over FLOOR cells; a textured cell replaces the gold/black checkerboard for that cell only. |
-| **Detail / Zoom** | Click a FLOOR cell to open its **11×11 sub-grid** in a zoom modal. Paint individual floor tiles *and* individual wall faces within the cell, and set the **cell height (2–16)** — the ceiling drops to match and soffits close the step down to taller neighbours. See [Sub-tile detail & height](#sub-tile-detail--height) below. |
+| **Detail / Zoom** | Click a FLOOR cell to open its **11×11 sub-grid** in a zoom modal. Paint individual floor tiles, individual wall faces, or use **Walls (structure)** to carve the cell into non-square room shapes, and set the **cell height (4–16)** — the ceiling drops to match and soffits close the step down to taller neighbours. See [Sub-tile detail & height](#sub-tile-detail--height) below. |
 | **Ceiling** | Level-wide ceiling texture. Click a floor texture in the picker to set the ceiling for the whole level, or **None** for the engine default. |
 | **Place Object** | Opens a picker of decorative objects (fountains, cauldrons, tables, chairs, chests, barrels, pillars, braziers, boulders, plants, and more). Pick one, then click a floor cell to place/remove it. Spawned in-game the same way as the original fountains. |
 | **Fountain** | Click a cell to place/remove the original Underworld fountain (sits on floor). |
@@ -42,7 +42,8 @@ textures: **47 wall textures** and **7 floor textures** per level, plus the one 
 ceiling. Exceeding that budget makes the overflow cells fall back to the default wall / the
 gold-black checkerboard, and **Save Map** warns you first. A few engine slots are overwritten
 pure black at load (wall texture 64, floor texture 26); the picker flags these so you know they
-render solid black in-game.
+render solid black in-game. **Hover any texture swatch** (in the palette pickers or the zoom
+sub-texture pickers) to see a large 256×256 enlargement so you can tell similar textures apart.
 
 ## Sub-tile detail & height
 
@@ -55,7 +56,15 @@ tool exposes that grid so you can go finer than a whole cell:
 - **Wall sub-textures** — paint individual wall faces. Edge tiles that face a solid neighbour
   (highlighted with a blue outline) render their wall in-game and override the cell-level Wall
   Texture; interior tiles only render if that side later becomes a wall.
-- **Cell height (2–16)** — sets how tall the cell's walls are, and the **ceiling drops to match**.
+- **Walls (structure)** — carve the cell into non-square rooms. Paint sub-tiles **solid** (shown
+  as brown brick) to turn them into full-height interior wall/void, or paint them back **open**.
+  A solid sub-tile becomes an engine tile of type 0: it renders no floor, the open tiles around
+  it draw full-height wall faces against it, and the mesh collider blocks it — so a single map
+  cell can hold an L-shape, a diagonal, a pillar, or any other shape instead of a plain square.
+  To *texture* an interior wall face, paint a **Wall sub-texture** on the open tile next to the
+  solid area (the engine draws the face from the open side). Solid sub-tiles stay visible in
+  every zoom mode so the room outline is always clear.
+- **Cell height (4–16)** — sets how tall the cell's walls are, and the **ceiling drops to match**.
   Where a shorter cell sits beside a taller one, a vertical **soffit** is emitted to close the
   ceiling step so there is no gap. 16 is the default full height (stored as 0 in the sidecar);
   very low values may clip the camera.
@@ -82,7 +91,7 @@ to close it.
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "tilesPerCell": 11,
   "levels": [
     {
@@ -93,12 +102,13 @@ to close it.
       "wallTex":  [-1,-1,17, ...],                  // per-cell wall texture 0-209, -1 = engine default
       "floorTex": [-1,3,-1, ...],                   // per-cell floor texture 0-51, -1 = gold/black checkerboard
       "ceilTex":  0,                                // level-wide ceiling, 1-based (0 = engine default)
-      "cellHeight": [0,0,12, ...],                  // per-cell height 2-16, 0 = default (16); row-major, aligned to cells
+      "cellHeight": [0,0,12, ...],                  // per-cell height 4-16, 0 = default (16); row-major, aligned to cells
       "subtiles": [                                 // sparse per-cell 11x11 sub-texture overrides
         {
           "cell": 17,                               // cell index (y*width + x), row-major
           "floor": [-1,-1,3, ...],                   // 121 entries, floor texture 0-51 or -1; sub-row 0 = north, sub-col 0 = west
-          "wall":  [-1,17,-1, ...]                   // 121 entries, wall texture 0-209 or -1; same layout
+          "wall":  [-1,17,-1, ...],                  // 121 entries, wall texture 0-209 or -1; same layout
+          "solid": [0,0,1, ...]                      // 121 entries, 1 = carved interior wall/void, 0 = open floor; same layout (omitted when all 0)
         }
       ],
       "objects":  [ { "type": 302, "x": 4, "y": 4 } ], // decorative objects; type = OBJECTS.GR sprite index
@@ -120,8 +130,10 @@ and `floorTex` are the full-resolution per-cell texture arrays (same length as `
 `ceilTex` is stored **1-based** (0 means “no explicit ceiling”). `cellHeight` is a per-cell
 array the same length as `cells` (0 = default full height of 16). `subtiles` is a **sparse**
 list — only cells that actually have sub-tile overrides appear, each with full-length 121-entry
-`floor`/`wall` arrays (sub-row 0 = north, sub-col 0 = west, matching the engine's tile flip).
-Older sidecars without these keys still load — missing fields fall back to defaults.
+`floor`/`wall` arrays (sub-row 0 = north, sub-col 0 = west, matching the engine's tile flip). The
+optional `solid` array (same 121-entry layout) carves non-square rooms: a `1` marks a sub-tile as
+full-height interior wall/void (engine tile type 0). Older sidecars without these keys still load —
+missing fields fall back to defaults.
 
 ## Run from source
 
