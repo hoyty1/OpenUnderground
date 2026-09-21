@@ -89,7 +89,8 @@ public static class DeceitLoader
     //   defaultHeight  : 0 = 16 (classic full height), else 4..16.
     //   defaultWallTex : 0 = engine default wall, n>=1 = wallMat (n-1).
     //   defaultFloorTex: 0 = gold/black checkerboard, n>=1 = floorMat (n-1).
-    [Serializable] public class DeceitMap { public int version, tilesPerCell; public DeceitLevel[] levels; public int defaultHeight; public int defaultWallTex; public int defaultFloorTex; }
+    [Serializable] public class DeceitWallTexProp { public int tex; public bool noRepeat; }
+    [Serializable] public class DeceitMap { public int version, tilesPerCell; public DeceitLevel[] levels; public int defaultHeight; public int defaultWallTex; public int defaultFloorTex; public DeceitWallTexProp[] wallTexProps; }
 
     // ---- Deceit per-level texture palettes (consumed by LevelGeometry) --------------------
     // The engine mesh has a fixed 48 wall + 10 floor material slots. In Deceit mode we pack
@@ -115,11 +116,19 @@ public static class DeceitLoader
     // "Object" wall textures: wallMat indices that draw a fixture (gate, grate, lever, etc.)
     // baked into the texture. These must render ONCE across the bottom 4-unit segment of a wall
     // (never tiled up its full height); the rest of the wall height is filled with the surface's
-    // ordinary (background) wall texture. Seeded with the two portcullis gates the design calls
-    // out (38 & 39); extend this set as more object textures are identified.
+    // ordinary (background) wall texture. This set is populated per-map from the sidecar's
+    // wallTexProps (each entry with noRepeat = true) by RebuildObjectWallMats; it is empty until
+    // a map is loaded. Authored in the map editor via "Wall Texture Properties".
     public static readonly System.Collections.Generic.HashSet<int> ObjectWallMats =
-        new System.Collections.Generic.HashSet<int> { 38, 39 };
+        new System.Collections.Generic.HashSet<int>();
     public static bool IsObjectWallMat(int wallMat) { return wallMat >= 0 && ObjectWallMats.Contains(wallMat); }
+    private static void RebuildObjectWallMats(DeceitMap map)
+    {
+        ObjectWallMats.Clear();
+        if (map == null || map.wallTexProps == null) return;
+        foreach (DeceitWallTexProp p in map.wallTexProps)
+            if (p != null && p.noRepeat && p.tex >= 0) ObjectWallMats.Add(p.tex);
+    }
 
     private static DeceitMap sMap;
     private static bool sMapLoaded;
@@ -141,6 +150,7 @@ public static class DeceitLoader
         {
             string json = File.ReadAllText(mapPath);
             sMap = JsonUtility.FromJson<DeceitMap>(json);
+            RebuildObjectWallMats(sMap);
             int levelCount = (sMap != null && sMap.levels != null) ? sMap.levels.Length : 0;
             Debug.Log($"[DeceitLoader] Loaded DECEIT.map.json (version {(sMap != null ? sMap.version : 0)}, {levelCount} levels).");
         }

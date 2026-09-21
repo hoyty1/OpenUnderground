@@ -286,3 +286,22 @@ body {
 .btn-apply { background: #3a2f12; border: 1px solid #6d5a1f; color: #e6cf7a; white-space: nowrap; }
 .btn-apply:hover { background: #4a3c17; border-color: #d9b64e; color: #f3e2a0; }
 .tex-picker-modal { max-height: 80vh; overflow-y: auto; max-width: 560px; }
+
+/* ---- Wall Texture Properties modal --------------------------------------- */
+.wtp-modal { max-width: 780px; max-height: 84vh; overflow: hidden; display: flex; flex-direction: column; }
+.wtp-help { font-size: 12px; color: #aaa; margin: 6px 2px 10px; line-height: 1.4; }
+.wtp-layout { display: flex; gap: 14px; min-height: 0; flex: 1; }
+.wtp-grid { flex: 1; overflow-y: auto; max-height: 62vh; align-content: start; }
+.wtp-panel { width: 230px; flex: none; border-left: 1px solid #333; padding-left: 14px; overflow-y: auto; }
+.wtp-panel-empty { font-size: 12px; color: #888; margin-top: 8px; line-height: 1.4; }
+.wtp-preview { width: 96px; height: 96px; border: 1px solid #444; background: #1a1a1a; margin-bottom: 8px; }
+.wtp-preview img { width: 100%; height: 100%; object-fit: cover; display: block; image-rendering: pixelated; }
+.wtp-preview.tex-missing { color: #666; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+.wtp-sel-label { font-size: 13px; font-weight: 600; color: #ddd; margin-bottom: 10px; }
+.wtp-prop { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; padding: 6px; border-radius: 4px; }
+.wtp-prop:hover { background: #262626; }
+.wtp-prop input { margin-top: 2px; flex: none; }
+.wtp-prop-text { display: flex; flex-direction: column; gap: 3px; }
+.wtp-prop-name { font-size: 13px; color: #eee; }
+.wtp-prop-desc { font-size: 11px; color: #999; line-height: 1.4; }
+.tex-swatch.wtp-flagged::before { content: '\26D4'; position: absolute; top: 1px; left: 2px; font-size: 10px; text-shadow: 0 0 3px #000; z-index: 1; }

@@ -112,6 +112,7 @@ const state = {
   levels: defaultLevels(),
   // Dungeon-wide defaults; a floor (level) or a room (cell) may override each of these.
   mapDefaults: { height: 16, wallTex: -1, floorTex: -1 }, // height 4..16; wall/floorTex: -1 = engine default, 0..N = texture
+  wallTexProps: {},  // dungeon-wide per-wall-texture properties, keyed by texIndex: { [tex]: { noRepeat: true } }
   level: 0,
   tool: 'floor',
   loadedDir: null,   // directory of the last opened/saved file (for the .json sidecar)
@@ -142,7 +143,7 @@ const undoStack = [];
 const redoStack = [];
 let _histBaseline = null;   // JSON of the last committed document
 let _histSuspend = false;   // true while restoring, so render()'s capture is a no-op
-function docSnapshotJSON() { return JSON.stringify({ levels: state.levels, mapDefaults: state.mapDefaults }); }
+function docSnapshotJSON() { return JSON.stringify({ levels: state.levels, mapDefaults: state.mapDefaults, wallTexProps: state.wallTexProps }); }
 function recordHistory() {
   if (_histSuspend) return;
   if (state.painting || state.zoomPainting) return;   // mid-stroke: wait for stopPaint
@@ -159,6 +160,7 @@ function restoreDoc(jsonStr) {
   const d = JSON.parse(jsonStr);
   state.levels = d.levels;
   state.mapDefaults = d.mapDefaults;
+  state.wallTexProps = d.wallTexProps || {};
   const lv = state.levels[state.level] || state.levels[0];
   const total = lv.width * lv.height;
   if (state.selected != null && state.selected >= total) state.selected = null;
@@ -408,6 +410,11 @@ function buildLevelsFromSidecar(json) {
     wallTex: (Number.isFinite(json.defaultWallTex) && json.defaultWallTex > 0) ? json.defaultWallTex - 1 : -1,
     floorTex: (Number.isFinite(json.defaultFloorTex) && json.defaultFloorTex > 0) ? json.defaultFloorTex - 1 : -1
   };
+  // Dungeon-wide per-wall-texture properties (sidecar array -> sparse object keyed by tex index).
+  state.wallTexProps = {};
+  if (Array.isArray(json.wallTexProps)) json.wallTexProps.forEach(p => {
+    if (p && Number.isFinite(p.tex) && p.tex >= 0 && p.noRepeat) state.wallTexProps[p.tex] = { noRepeat: true };
+  });
   for (let i = 0; i < LEVELS; i++) {
     const jl = src.find(l => l.index === i) || src[i];
     if (jl && Array.isArray(jl.cells)) {
@@ -531,8 +538,12 @@ function buildDngBuffer() {
 
 function buildSidecar() {
   return {
-    version: 6,
+    version: 7,
     tilesPerCell: TILES_PER_CELL,
+    // Dungeon-wide per-wall-texture properties; only textures with a set flag are emitted.
+    wallTexProps: Object.keys(state.wallTexProps)
+      .map(k => ({ tex: +k, noRepeat: !!(state.wallTexProps[k] && state.wallTexProps[k].noRepeat) }))
+      .filter(p => p.noRepeat),
     // Dungeon-wide defaults (JsonUtility-safe; 0 = engine default). height: 0 = 16.
     defaultHeight: state.mapDefaults.height === 16 ? 0 : state.mapDefaults.height,
     defaultWallTex: state.mapDefaults.wallTex < 0 ? 0 : state.mapDefaults.wallTex + 1,
@@ -796,6 +807,73 @@ function buildPicker() {
 // ---- Defaults (dungeon / per-floor) inspector section ----------------------
 // A modal texture picker used by the default controls. onPick receives -2 (inherit),
 // -1 (engine default / checkerboard) or a texture index 0..N. opts: {allowInherit, allowNone, title}.
+// Wall Texture Properties: a dungeon-wide editor for per-wall-texture flags. Currently a single
+// "don't repeat vertically" flag (drives the engine's object-on-wall once-at-bottom rendering),
+// but the panel is structured so more per-texture properties can be added later.
+function hasWallTexProps(tex) { const p = state.wallTexProps[tex]; return !!(p && p.noRepeat); }
+function openWallTexProps() {
+  const ov = el('div', 'zoom-overlay');
+  const close = () => { if (ov.parentNode) ov.parentNode.removeChild(ov); };
+  ov.addEventListener('pointerdown', (e) => { if (e.target === ov) close(); });
+  const modal = el('div', 'zoom-modal wtp-modal');
+  const head = el('div', 'zoom-head');
+  head.appendChild(el('div', 'zoom-title', 'Wall texture properties'));
+  head.appendChild(button('Close ✕', 'btn btn-sm', close));
+  modal.appendChild(head);
+  modal.appendChild(el('div', 'wtp-help', 'Click a wall texture, then set its properties. These apply dungeon-wide and are saved with the map. Flagged textures are marked ⛔.'));
+  const layout = el('div', 'wtp-layout');
+  const grid = el('div', 'tex-grid wtp-grid');
+  const panel = el('div', 'wtp-panel');
+  let sel = -1;
+
+  function renderPanel() {
+    panel.innerHTML = '';
+    if (sel < 0) { panel.appendChild(el('div', 'wtp-panel-empty', 'Select a wall texture on the left to edit its properties.')); return; }
+    const prev = el('div', 'wtp-preview');
+    const img = document.createElement('img'); img.src = wallThumb(sel); img.alt = 'wall texture ' + sel;
+    img.onerror = () => { prev.classList.add('tex-missing'); prev.textContent = String(sel); };
+    prev.appendChild(img);
+    panel.appendChild(prev);
+    panel.appendChild(el('div', 'wtp-sel-label', 'Wall texture #' + sel));
+    const row = el('label', 'wtp-prop');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = hasWallTexProps(sel);
+    cb.onchange = () => {
+      if (cb.checked) state.wallTexProps[sel] = { noRepeat: true };
+      else delete state.wallTexProps[sel];
+      const sw = grid.querySelector('[data-tex="' + sel + '"]');
+      if (sw) sw.classList.toggle('wtp-flagged', cb.checked);
+      recordHistory();
+    };
+    row.appendChild(cb);
+    const txt = el('span', 'wtp-prop-text');
+    txt.appendChild(el('span', 'wtp-prop-name', "Don't repeat vertically"));
+    txt.appendChild(el('span', 'wtp-prop-desc', 'Draws this texture once across the bottom 4-unit segment of the wall (for gates, grates, levers and other baked-in fixtures) instead of tiling it up the full height.'));
+    row.appendChild(txt);
+    panel.appendChild(row);
+  }
+
+  for (let i = 0; i < WALL_TEX_COUNT; i++) {
+    const s = el('div', 'tex-swatch' + (hasWallTexProps(i) ? ' wtp-flagged' : '') + (i === BLACK_WALL_TEX ? ' tex-black' : ''));
+    s.setAttribute('data-tex', i);
+    const img = document.createElement('img'); img.src = wallThumb(i); img.alt = 'wall texture ' + i;
+    img.onerror = () => { s.classList.add('tex-missing'); s.textContent = String(i); };
+    s.appendChild(img); s.title = 'Wall texture ' + i;
+    s.onclick = () => {
+      sel = i;
+      grid.querySelectorAll('.tex-swatch.sel').forEach(e => e.classList.remove('sel'));
+      s.classList.add('sel');
+      renderPanel();
+    };
+    attachTexPreview(s, wallThumb(i), 'Wall texture ' + i);
+    grid.appendChild(s);
+  }
+  layout.appendChild(grid);
+  layout.appendChild(panel);
+  modal.appendChild(layout);
+  renderPanel();
+  ov.appendChild(modal); document.body.appendChild(ov);
+}
+
 function openTexPicker(kind, current, onPick, opts) {
   opts = opts || {};
   const thumb = kind === 'wall' ? wallThumb : floorThumb;
@@ -943,6 +1021,7 @@ function render() {
   const undoBtn = button('\u21B6 Undo', 'btn', undo); undoBtn.disabled = undoStack.length === 0; undoBtn.title = 'Undo (Ctrl+Z)';
   const redoBtn = button('\u21B7 Redo', 'btn', redo); redoBtn.disabled = redoStack.length === 0; redoBtn.title = 'Redo (Ctrl+Y or Ctrl+Shift+Z)';
   hc.appendChild(undoBtn); hc.appendChild(redoBtn);
+  hc.appendChild(button('Wall Texture Properties', 'btn', openWallTexProps));
   hc.appendChild(button('Load DECEIT.DNG', 'btn', loadDng));
   hc.appendChild(button('Load Map (.json)', 'btn', loadMap));
   hc.appendChild(button('Save Map', 'btn btn-primary', saveMap));

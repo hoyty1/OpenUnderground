@@ -9,7 +9,7 @@ step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.13.0.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.14.0.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 
@@ -107,11 +107,14 @@ tool exposes that grid so you can go finer than a whole cell:
   (highlighted with a blue outline) render their wall in-game and override the cell-level Wall
   Texture; interior tiles only render if that side later becomes a wall.
 - **Object textures on walls** — some wall textures are objects mounted *on* a wall rather than a
-  repeating surface (for example the two gates, textures **38** and **39**). When you paint one of
-  these as a wall sub-texture, the engine draws the object **once** across the bottom 4-unit
-  segment of the wall and fills the rest of the wall's height with the room's default wall texture
-  as a background, so the object never tiles upward. Paint them exactly like any other wall
-  sub-texture; the once-at-the-bottom behaviour is automatic for the recognised object textures.
+  repeating surface (gates, grates, levers and other fixtures baked into the texture). Mark these
+  with the **Wall Texture Properties** button in the header: click the texture and tick **Don't
+  repeat vertically**. Then, wherever that texture is painted as a wall, the engine draws the
+  object **once** across the bottom 4-unit segment of the wall and fills the rest of the wall's
+  height with the room's default wall texture as a background, so the object never tiles upward.
+  The flags are dungeon-wide and saved in the map (`DECEIT.map.json`, sidecar v7), so each map
+  carries its own set — nothing is hardcoded. Paint the textures exactly like any other wall
+  sub-texture; the once-at-the-bottom behaviour follows the flag automatically.
 - **Walls (structure)** — carve the cell into non-square rooms. Paint sub-tiles **solid** (shown
   as brown brick) to turn them into full-height interior wall/void, or paint them back **open**.
   A solid sub-tile becomes an engine tile of type 0: it renders no floor, the open tiles around
