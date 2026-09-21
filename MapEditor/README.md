@@ -9,7 +9,7 @@ step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.14.1.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.14.2.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 
@@ -30,7 +30,7 @@ immediately.
 | **Fountain** | Click a cell to place/remove the original Underworld fountain (sits on floor). |
 | **Spawn Point** | Click a floor cell to set where the player starts a new game on this level. One per level — clicking a new cell moves it; clicking it again removes it. |
 | **Wrap Border** | Click an edge cell to mark a seamless wrap border. Set a per-direction exit (N/E/S/W) on the right; the corridor loops through that edge continuously. |
-| **Staircase** | Click a floor cell to place a staircase, then choose Up, Down or Exit on the right. Up/Down teleport to a target staircase on any level; Exit leaves the dungeon. |
+| **Staircase** | Click a floor cell to place a staircase, then choose Up, Down or Exit on the right. For Up/Down also pick which wall the stairway sits on and the target staircase (any level): a single stairway appears on that wall and the player walks into it to travel, stepping out of the linked stairway on arrival. Exit leaves the dungeon. |
 | **Erase** | Hold and drag to clear cells back to empty (floor/wall/textures/object/fountain/border/stair). |
 
 Click a cell to paint; hold and drag to paint many (point tools — object, fountain, spawn, wrap, stair — act on the initial press only). Switch levels with the tabs across the top.
@@ -140,14 +140,15 @@ to close it.
 
 ## Stair-cell wall textures
 
-The floor cell that holds a staircase **trigger** is skinned in-game with the matching stairway
-wall texture on every wall face it renders: **wall texture 139 for an Up staircase** and **wall
-texture 137 for a Down staircase** (Exit staircases get no special texture). This is applied
-automatically at load — you only place the staircase and choose Up/Down/Exit as usual. For the
-stairway to be visible the stair cell must sit against a solid neighbour so a wall face actually
-exists there; a stair cell with open floor on all sides has no wall to paint. The stairway
-texture is applied last, so it wins over neighbour-cell, structural and hand-painted wall
-textures on that cell.
+An Up/Down staircase shows a **single stairway on one wall** of its floor cell — the wall you
+pick with the **Wall side** dropdown (North/East/South/West). That one wall tile is skinned
+with the matching stairway texture: **wall texture 139 for Up** and **wall texture 137 for
+Down** (Exit staircases get no special texture). In-game the player **walks into that stairway**
+to use it; they arrive one tile in front of the linked destination stairway, facing into the
+room, as if stepping out of it. The chosen wall must sit against a solid neighbour so a wall
+face exists there — the editor defaults the Wall side to the first solid neighbour of the cell.
+The stairway texture is applied last, so it wins over neighbour-cell, structural and
+hand-painted wall textures on that tile.
 
 ## Loading & saving
 
@@ -198,7 +199,7 @@ textures on that cell.
         { "id": 1, "x": 0, "y": 3, "exits": { "N": null, "E": null, "S": null, "W": true } }
       ],
       "stairs": [
-        { "id": 1, "x": 5, "y": 5, "kind": "down", "targetLevel": 1, "targetId": 2 }
+        { "id": 1, "x": 5, "y": 5, "kind": "down", "side": "N", "targetLevel": 1, "targetId": 2 }
       ]
     }
   ]

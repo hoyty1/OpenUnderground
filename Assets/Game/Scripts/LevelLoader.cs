@@ -771,6 +771,29 @@ public class LevelLoader : MonoBehaviour
         PlayerObject.Player.TeleportTo(pos, rot);
     }
 
+    // Explicit-facing variant used by the Deceit stair driver: lands the player on (tileX,tileY)
+    // facing yawDegrees about +Y (0 = +Z / north), so they step out of the destination stairway
+    // into the room instead of being auto-oriented by the view/decal probe above.
+    public void ChangeLevel(int level, int tileX, int tileY, float yawDegrees)
+    {
+        if (level != 0 && level != loadedLevel)
+        {
+            DeactivateCurrentLevel();
+            LoadLevel(level);
+            if (level == 9)
+            {
+                DismissPlayerPanelsForVoidLevel();
+            }
+        }
+
+        PlayerObject.Player.fade = 1.0f;
+        PlayerObject.Player.fadeIn = true;
+
+        Vector3 pos = GetTile(tileX, tileY).GetCenter() + Vector3.up;
+        Quaternion rot = Quaternion.AngleAxis(yawDegrees, Vector3.up);
+        PlayerObject.Player.TeleportTo(pos, rot);
+    }
+
     public void PrepareForLoad()
     {
         foreach (GameObject o in FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None))

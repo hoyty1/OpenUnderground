@@ -35,9 +35,11 @@ public static class DeceitLoader
     [Serializable] public class DeceitPoint { public int x, y; }
     [Serializable] public class DeceitBorder { public int id, x, y; public DeceitExits exits; }
     // A staircase placed in a cell. kind: "up" | "down" | "exit".
+    // side ("N"|"E"|"S"|"W") is the ONE wall of the cell that shows the stairway and that the
+    // player walks into to use it; unused for "exit".
     // For up/down, targetLevel is a sidecar level index (0-based) and targetId is the
     // id of the destination stair on that level. For "exit" those fields are unused.
-    [Serializable] public class DeceitStair { public int id, x, y; public string kind; public int targetLevel, targetId; }
+    [Serializable] public class DeceitStair { public int id, x, y; public string kind; public string side; public int targetLevel, targetId; }
     // A decorative world object (fountain-style) placed in a cell. type == EObjectType value
     // (== OBJECTS.GR sprite index). x,y are cell coordinates.
     [Serializable] public class DeceitObject { public int type, x, y; }
@@ -109,10 +111,11 @@ public static class DeceitLoader
     public const int MaxWallSlots    = 48;  // wall submesh slots 0..47 (slot 0 = default)
     public const int FirstFloorSlot  = 2;   // floor slots 2..8 hold explicit floor textures
     public const int LastFloorSlot   = 8;   // (slots 0/1 = checkerboard, slot 9 = ceiling)
-    // Stairway wall textures: the cell holding an ascend/descend trigger gets its wall faces
-    // skinned with the matching original stairway texture so the way up/down is visible.
-    public const int StairUpWallMat   = 139; // wallMat index shown on an "up" stair cell
-    public const int StairDownWallMat = 137; // wallMat index shown on a "down" stair cell
+    // Stairway wall textures: the cell holding an ascend/descend trigger shows the matching
+    // original stairway texture on ONE wall tile (the authored side) so the way up/down is a
+    // single opening the player walks into.
+    public const int StairUpWallMat   = 139; // wallMat index shown on an "up" stairway tile
+    public const int StairDownWallMat = 137; // wallMat index shown on a "down" stairway tile
     // "Object" wall textures: wallMat indices that draw a fixture (gate, grate, lever, etc.)
     // baked into the texture. These must render ONCE across the bottom 4-unit segment of a wall
     // (never tiled up its full height); the rest of the wall height is filled with the surface's
@@ -557,10 +560,11 @@ public static class DeceitLoader
             }
         }
 
-        // ---- Stair-cell wall textures: the floor cell holding an up/down trigger shows the
-        // matching stairway texture on every wall face it renders (139 up, 137 down). Runs last
-        // so the stairway wins over neighbour-cell, structural and hand-painted wall textures.
-        // The stair cell must sit against a solid neighbour for a wall face to exist there. ----
+        // ---- Stairway wall texture: the floor cell holding an up/down trigger shows the matching
+        // stairway texture on ONE wall tile (the centre tile of the authored side), so the way
+        // up/down is a single opening the player walks into (139 up, 137 down). Runs last so the
+        // stairway wins over neighbour-cell, structural and hand-painted wall textures. That side
+        // must sit against a solid neighbour for a wall face to exist there. ----
         if (sc.stairs != null)
         {
             foreach (DeceitStair stair in sc.stairs)
@@ -574,16 +578,14 @@ public static class DeceitLoader
                 int slot = wallSlotFor(mat);
                 int uxBase = scx * TilesPerCell;
                 int uyBase = (ch - 1 - scy) * TilesPerCell;
-                for (int dx = 0; dx < TilesPerCell; dx++)
-                {
-                    Tile tn = level.tiles[uxBase + dx, uyBase + TilesPerCell - 1]; tn.wallTexture = slot; tn.objWallBg = -1; // north edge
-                    Tile ts = level.tiles[uxBase + dx, uyBase];                     ts.wallTexture = slot; ts.objWallBg = -1; // south edge
-                }
-                for (int dy = 0; dy < TilesPerCell; dy++)
-                {
-                    Tile tw = level.tiles[uxBase, uyBase + dy];                     tw.wallTexture = slot; tw.objWallBg = -1; // west edge
-                    Tile te = level.tiles[uxBase + TilesPerCell - 1, uyBase + dy];   te.wallTexture = slot; te.objWallBg = -1; // east edge
-                }
+                int c = TilesPerCell / 2;                                // centre tile of the edge
+                string side = stair.side != null ? stair.side.ToUpperInvariant() : "N";
+                Tile t;
+                if (side == "N")      t = level.tiles[uxBase + c, uyBase + TilesPerCell - 1];  // north wall
+                else if (side == "S") t = level.tiles[uxBase + c, uyBase];                     // south wall
+                else if (side == "W") t = level.tiles[uxBase, uyBase + c];                     // west wall
+                else                  t = level.tiles[uxBase + TilesPerCell - 1, uyBase + c];   // east wall ("E")
+                t.wallTexture = slot; t.objWallBg = -1;
             }
         }
 

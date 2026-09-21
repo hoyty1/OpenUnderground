@@ -7,11 +7,12 @@ using UnityEngine.SceneManagement;
 /// Replicates the base-game stair mechanic (a MoveTrigger linked to a TeleportTrap that
 /// calls LevelLoader.ChangeLevel) with a single persistent singleton instead of a pair of
 /// per-stair objects. Each frame it reads the current sidecar level's staircases (authored
-/// in the map editor) and checks whether the player is standing on a stair's centre tile:
+/// in the map editor) and checks the player's tile:
 ///
-///   • "down" / "up" → LevelLoader.ChangeLevel(targetLevel+1, destTileX, destTileY),
-///                     landing the player on the linked destination stair.
-///   • "exit"        → returns to the World scene (leave the dungeon).
+///   • "down" / "up" → fires when the player walks into the single stairway wall tile, then
+///                     LevelLoader.ChangeLevel lands them stepping out of the linked
+///                     destination stairway, facing into that room.
+///   • "exit"        → fires on the cell centre tile; returns to the World scene.
 ///
 /// A re-arm flag prevents repeated firing while the player remains on the stair tile after a
 /// teleport; it resets once the player steps off every stair tile.
@@ -54,13 +55,21 @@ public class DeceitStairManager : MonoBehaviour
         {
             DeceitLoader.DeceitStair st = sc.stairs[i];
             if (st == null) continue;
-            int stx = st.x * DeceitLoader.TilesPerCell + DeceitLoader.TilesPerCell / 2;
-            int sty = (sc.height - 1 - st.y) * DeceitLoader.TilesPerCell + DeceitLoader.TilesPerCell / 2; // N/S flip
-            if (px == stx && py == sty)
+            string k = st.kind != null ? st.kind.ToLowerInvariant() : "down";
+            bool hit;
+            if (k == "exit")
             {
-                onStair = st;
-                break;
+                // Exit stairs have no wall stairway; trigger on the cell's centre tile.
+                int stx = st.x * DeceitLoader.TilesPerCell + DeceitLoader.TilesPerCell / 2;
+                int sty = (sc.height - 1 - st.y) * DeceitLoader.TilesPerCell + DeceitLoader.TilesPerCell / 2; // N/S flip
+                hit = (px == stx && py == sty);
             }
+            else
+            {
+                // up/down: trigger when the player walks into the single stairway wall tile.
+                hit = OnStairEdge(sc, st, px, py);
+            }
+            if (hit) { onStair = st; break; }
         }
 
         if (onStair == null)
@@ -112,11 +121,44 @@ public class DeceitStairManager : MonoBehaviour
             return;
         }
 
-        int destTileX = target.x * DeceitLoader.TilesPerCell + DeceitLoader.TilesPerCell / 2;
-        int destTileY = (dest.height - 1 - target.y) * DeceitLoader.TilesPerCell + DeceitLoader.TilesPerCell / 2; // N/S flip
+        int destTileX, destTileY;
+        float destYaw;
+        DestArrival(dest, target, out destTileX, out destTileY, out destYaw);
         int destUwLevel = st.targetLevel + 1; // sidecar index → 1-based engine level
 
-        Debug.Log($"[DeceitStairManager] Stair id {st.id} ({kind}) → level {destUwLevel} tile ({destTileX},{destTileY}).");
-        LevelLoader.sLevelLoader.ChangeLevel(destUwLevel, destTileX, destTileY);
+        Debug.Log($"[DeceitStairManager] Stair id {st.id} ({kind}) → level {destUwLevel} tile ({destTileX},{destTileY}) yaw {destYaw}.");
+        LevelLoader.sLevelLoader.ChangeLevel(destUwLevel, destTileX, destTileY, destYaw);
+    }
+
+    // True when player tile (px,py) is the single stairway wall tile for stair st (up/down).
+    // Mirrors the wall-paint formula in DeceitLoader.BuildFromSidecar.
+    private static bool OnStairEdge(DeceitLoader.DeceitLevel sc, DeceitLoader.DeceitStair st, int px, int py)
+    {
+        int uxBase = st.x * DeceitLoader.TilesPerCell;
+        int uyBase = (sc.height - 1 - st.y) * DeceitLoader.TilesPerCell; // N/S flip
+        int c = DeceitLoader.TilesPerCell / 2;
+        string side = st.side != null ? st.side.ToUpperInvariant() : "N";
+        int ex, ey;
+        if (side == "N")      { ex = uxBase + c;                              ey = uyBase + DeceitLoader.TilesPerCell - 1; }
+        else if (side == "S") { ex = uxBase + c;                              ey = uyBase; }
+        else if (side == "W") { ex = uxBase;                                  ey = uyBase + c; }
+        else                  { ex = uxBase + DeceitLoader.TilesPerCell - 1;  ey = uyBase + c; } // "E"
+        return px == ex && py == ey;
+    }
+
+    // Where the player lands after arriving at destination stair `target`: one tile INTO the
+    // room from the stairway wall, centred on the opening, facing away from the wall (into the
+    // room), so they appear to step out of the destination stairway.
+    private static void DestArrival(DeceitLoader.DeceitLevel dest, DeceitLoader.DeceitStair target,
+                                    out int tileX, out int tileY, out float yaw)
+    {
+        int uxBase = target.x * DeceitLoader.TilesPerCell;
+        int uyBase = (dest.height - 1 - target.y) * DeceitLoader.TilesPerCell; // N/S flip
+        int c = DeceitLoader.TilesPerCell / 2;
+        string side = target.side != null ? target.side.ToUpperInvariant() : "N";
+        if (side == "N")      { tileX = uxBase + c;                              tileY = uyBase + DeceitLoader.TilesPerCell - 2; yaw = 180f; } // step south, face south
+        else if (side == "S") { tileX = uxBase + c;                              tileY = uyBase + 1;                             yaw = 0f; }   // step north, face north
+        else if (side == "W") { tileX = uxBase + 1;                              tileY = uyBase + c;                             yaw = 90f; }  // step east, face east
+        else                  { tileX = uxBase + DeceitLoader.TilesPerCell - 2;  tileY = uyBase + c;                             yaw = 270f; } // "E": step west, face west
     }
 }

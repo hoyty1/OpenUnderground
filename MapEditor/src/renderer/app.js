@@ -198,7 +198,7 @@ const TOOLS = [
   { id: 'fountain', label: 'Fountain',     hint: 'Click a cell to place/remove a fountain (original Underworld fountain). Sits on floor.' },
   { id: 'spawn',    label: 'Spawn Point',  hint: 'Click a floor cell to set where the player starts a new game on this level. Only one per level — clicking a new cell moves it; clicking it again removes it. Sits on floor.' },
   { id: 'wrap',     label: 'Wrap Border',  hint: 'Click an edge cell to mark a seamless wrap border. Set a per-direction exit (N/E/S/W) on the right; the corridor loops through that edge continuously. At least one direction is required.' },
-  { id: 'stair',    label: 'Staircase',    hint: 'Click a floor cell to place a staircase. On the right choose Up, Down or Exit — Up/Down stairs teleport the player to a target staircase you pick (any level); Exit leaves the dungeon. Sits on floor.' },
+  { id: 'stair',    label: 'Staircase',    hint: 'Click a floor cell to place a staircase. On the right choose Up, Down or Exit and (for Up/Down) which wall the stairway sits on — the player walks into that one wall stairway to travel to the linked stair, stepping out of its stairway on arrival. Exit leaves the dungeon. Sits on floor.' },
   { id: 'erase',    label: 'Erase',        hint: 'Hold and drag to clear cells back to empty (floor/wall/textures/object/fountain/border/stair).' }
 ];
 
@@ -354,7 +354,7 @@ function applyTool(idx) {
       if (existing) { removeStair(lv, existing); }           // toggle off + unlink refs pointing here
       else {
         if (lv.cells[idx] !== CELL.FLOOR) lv.cells[idx] = CELL.FLOOR; // stairs stand on floor
-        lv.stairs.push({ id: lv.nextStairId++, index: idx, kind: 'down', targetLevel: null, targetId: null });
+        lv.stairs.push({ id: lv.nextStairId++, index: idx, kind: 'down', side: defaultStairSide(lv, idx), targetLevel: null, targetId: null });
       }
       structural = true;                                     // updates inspector + legend
       break;
@@ -454,6 +454,7 @@ function buildLevelsFromSidecar(json) {
       (jl.stairs || []).forEach(s => {
         lv.stairs.push({
           id: s.id, index: s.y * w + s.x, kind: s.kind || 'down',
+          side: ['N','E','S','W'].includes(s.side) ? s.side : defaultStairSide(lv, s.y * w + s.x),
           targetLevel: Number.isFinite(s.targetLevel) ? s.targetLevel : null,
           targetId: Number.isFinite(s.targetId) ? s.targetId : null
         });
@@ -538,7 +539,7 @@ function buildDngBuffer() {
 
 function buildSidecar() {
   return {
-    version: 7,
+    version: 8,
     tilesPerCell: TILES_PER_CELL,
     // Dungeon-wide per-wall-texture properties; only textures with a set flag are emitted.
     wallTexProps: Object.keys(state.wallTexProps)
@@ -567,7 +568,7 @@ function buildSidecar() {
         wrapBorders: lv.wrapBorders.map(b => ({ id: b.id, ...xy(lv, b.index), exits: { N: b.exits.N, E: b.exits.E, S: b.exits.S, W: b.exits.W } })),
         stairs: lv.stairs.map(s => {
           const o = { id: s.id, ...xy(lv, s.index), kind: s.kind };
-          if (s.kind !== 'exit') { o.targetLevel = s.targetLevel; o.targetId = s.targetId; }
+          if (s.kind !== 'exit') { o.side = s.side || 'N'; o.targetLevel = s.targetLevel; o.targetId = s.targetId; }
           return o;
         })
       };
@@ -736,6 +737,7 @@ function fillCell(node, lv, idx) {
     const glyph = st.kind === 'up' ? '▲' : st.kind === 'exit' ? '🚪' : '▼';
     const km = el('div', 'stair-mark', glyph);
     km.style.fontSize = Math.max(9, Math.round(cellPx * 0.44)) + 'px';
+    if (st.kind !== 'exit') km.title = 'Stairway on ' + (st.side || 'N') + ' wall';
     node.appendChild(km);
   }
 }
@@ -1133,7 +1135,7 @@ function render() {
   // ---- Staircases section
   inspector.appendChild(el('h2', null, 'Staircases \u2014 Level ' + (state.level + 1)));
   if (lv.stairs.length === 0) {
-    inspector.appendChild(el('div', 'muted', 'No staircases yet. Pick the Staircase tool and click a floor cell. Set each stair to Up, Down or Exit \u2014 Up/Down stairs teleport the player to the target staircase you choose (any level); Exit leaves the dungeon.'));
+    inspector.appendChild(el('div', 'muted', 'No staircases yet. Pick the Staircase tool and click a floor cell. Set each stair to Up, Down or Exit \u2014 for Up/Down also pick the wall the stairway sits on and the target staircase; the player walks into that wall stairway to travel there and steps out of the linked stairway. Exit leaves the dungeon.'));
   } else {
     // Every stair that can be travelled TO (Up/Down on any level; Exit stairs are not destinations).
     const targets = [];
@@ -1158,6 +1160,18 @@ function render() {
       row.appendChild(kline);
 
       if (needsTarget) {
+        const sline = el('div', 'dir-line');
+        sline.appendChild(el('div', 'dir-label', 'Wall side'));
+        const ssel = document.createElement('select');
+        ssel.className = 'exit-select';
+        [['N', 'North wall'], ['E', 'East wall'], ['S', 'South wall'], ['W', 'West wall']].forEach(([v, t]) => {
+          const op = document.createElement('option'); op.value = v; op.textContent = t; ssel.appendChild(op);
+        });
+        ssel.value = sd.side || 'N';
+        ssel.onchange = () => { sd.side = ssel.value; render(); };
+        sline.appendChild(ssel);
+        row.appendChild(sline);
+
         const tline = el('div', 'dir-line');
         tline.appendChild(el('div', 'dir-label', 'Target'));
         const tsel = document.createElement('select');
@@ -1232,6 +1246,12 @@ function solidEdges(lv, idx) {
   const p = xy(lv, idx);
   const isFloor = (x, y) => x >= 0 && y >= 0 && x < lv.width && y < lv.height && lv.cells[y * lv.width + x] === CELL.FLOOR;
   return { N: !isFloor(p.x, p.y - 1), S: !isFloor(p.x, p.y + 1), W: !isFloor(p.x - 1, p.y), E: !isFloor(p.x + 1, p.y) };
+}
+// Default wall for a new stair's single stairway: first side that faces a solid neighbour
+// (so the stairway has a wall face to sit on), preferring N, then E, S, W.
+function defaultStairSide(lv, idx) {
+  const e = solidEdges(lv, idx);
+  return e.N ? 'N' : e.E ? 'E' : e.S ? 'S' : e.W ? 'W' : 'N';
 }
 // Serialise the sparse sub-texture maps into the sidecar's subtiles[] array.
 function buildSubtiles(lv) {
