@@ -9,7 +9,7 @@ step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.10.0.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.11.0.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 
@@ -54,20 +54,29 @@ so you set a value once and override it only where it differs:
    one height, wall texture and floor texture for the whole dungeon.
 2. **Floor default** — the **Floor Defaults — Level N** panel overrides any of the three for the
    current level. Leave a value on **Inherit** to keep using the dungeon default.
-3. **Room / cell** — inside the **Detail / Zoom** modal, cell height and per-tile textures
-   override the floor default for that one cell, and each structural wall you draw can take its
-   own wall texture. Anything left on Inherit falls through to the floor default, then the
-   dungeon default.
+3. **Room / cell** — inside the **Detail / Zoom** modal, the **Room Defaults — Cell (x, y)**
+   panel sets one wall texture and one floor texture for that whole room. Applying a room default
+   repaints every wall and floor in the cell and clears any individual sub-tile textures you had
+   painted there; leave it on **Inherit** to keep using the floor default. Cell height and
+   individual per-tile textures still override the room default, and each structural wall you draw
+   can take its own wall texture. Anything left on Inherit falls through to the room default, then
+   the floor default, then the dungeon default.
 
-A newly drawn structural wall starts on **Inherit**, so it immediately shows the floor's default
-wall texture; assign a specific texture only where you want that wall to differ. The cascade is
-stored losslessly in the sidecar (an inherited value is written as 0/-1), so re-editing a saved
-map keeps every default intact.
+A newly drawn structural wall starts on **Inherit**, so it immediately shows the room's default
+wall texture (which itself inherits the floor, then dungeon default); assign a specific texture
+only where you want that wall to differ. The cascade is stored losslessly in the sidecar (an
+inherited value is written as 0/-1, and a room default reuses the per-cell wallTex/floorTex
+arrays), so re-editing a saved map keeps every default intact and older maps load unchanged.
 
 ## Sub-tile detail & height
 
 Each map cell is rendered in-game as an **11×11 grid of engine tiles**. The **Detail / Zoom**
 tool exposes that grid so you can go finer than a whole cell:
+
+- **Room Defaults** — at the top of the modal, set one **wall** and one **floor** texture for the
+  entire room (this cell). Applying repaints every wall and floor in the cell at once and clears
+  any per-sub-tile textures painted here, so it is the fast way to skin a whole room; leave either
+  on **Inherit** to use this floor's default. It is also the base that newly carved walls inherit.
 
 - **Floor sub-textures** — paint any of the 52 floor textures onto individual tiles inside the
   cell. Untouched tiles keep the cell's Floor Texture (or the gold/black checkerboard). The
@@ -82,8 +91,8 @@ tool exposes that grid so you can go finer than a whole cell:
   cell can hold an L-shape, a diagonal, a pillar, or any other shape instead of a plain square.
   Each solid sub-tile carries its **own wall texture** — click a solid sub-tile with the picker
   to skin its structural wall face. A newly drawn wall starts out **Inherit**, meaning it uses
-  the floor's default wall texture (which itself inherits the dungeon default) until you assign
-  a specific one. Solid sub-tiles stay visible in every zoom mode so the room outline is always
+  the room's default wall texture (which itself inherits the floor, then dungeon default) until
+  you assign a specific one. Solid sub-tiles stay visible in every zoom mode so the room outline is always
   clear. (You can also paint a **Wall sub-texture** on the open tile next to a solid area for the
   older per-face method; a hand-painted sub-texture still wins over the structural texture.)
 - **Cell height (4–16)** — sets how tall the cell's walls are, and the **ceiling drops to match**.

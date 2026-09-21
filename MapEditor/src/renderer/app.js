@@ -754,7 +754,7 @@ function openTexPicker(kind, current, onPick, opts) {
   const grid = el('div', 'tex-grid');
   const pick = (v) => { close(); onPick(v); };
   if (opts.allowInherit) { const s = el('div', 'tex-swatch tex-none' + (current === -2 ? ' sel' : ''), 'Inherit'); s.title = 'Inherit the dungeon default'; s.onclick = () => pick(-2); grid.appendChild(s); }
-  if (opts.allowNone) { const s = el('div', 'tex-swatch tex-none' + (current === -1 ? ' sel' : ''), kind === 'wall' ? 'Default' : 'Checker'); s.title = kind === 'wall' ? 'Engine default wall' : 'Gold/black checkerboard'; s.onclick = () => pick(-1); grid.appendChild(s); }
+  if (opts.allowNone) { const s = el('div', 'tex-swatch tex-none' + (current === -1 ? ' sel' : ''), opts.noneLabel || (kind === 'wall' ? 'Default' : 'Checker')); s.title = opts.noneTitle || (kind === 'wall' ? 'Engine default wall' : 'Gold/black checkerboard'); s.onclick = () => pick(-1); grid.appendChild(s); }
   for (let i = 0; i < count; i++) {
     const s = el('div', 'tex-swatch' + (current === i ? ' sel' : '') + (i === black ? ' tex-black' : ''));
     const img = document.createElement('img'); img.src = thumb(i); img.alt = 'texture ' + i;
@@ -783,7 +783,7 @@ function defTexRow(labelText, kind, cur, eff, onPick, opts) {
   sw.title = 'Effective: ' + (eff >= 0 ? 'texture #' + eff : (kind === 'wall' ? 'engine default wall' : 'gold/black checkerboard')) + ' — click to change';
   sw.onclick = () => openTexPicker(kind, cur, onPick, opts);
   row.appendChild(sw);
-  row.appendChild(el('div', 'def-cur', texDefLabel(kind, cur)));
+  row.appendChild(el('div', 'def-cur', (opts && opts.noneLabel && cur === -1) ? opts.noneLabel : texDefLabel(kind, cur)));
   row.appendChild(button('Change', 'btn btn-xs', () => openTexPicker(kind, cur, onPick, opts)));
   return row;
 }
@@ -1087,7 +1087,7 @@ function fillSubCell(node, sr, sc) {
     if (state.zoomMode === 'solid') node.classList.add('subcell-solid-active');
     const stx = lv.subSolidTex[idx];
     const wv = stx ? stx[subIdx] : -1;
-    const eff = wv >= 0 ? wv : levelWallTex(lv);
+    const eff = wv >= 0 ? wv : cellWallTex(lv, idx);
     if (eff >= 0) { node.style.backgroundImage = 'url("' + wallThumb(eff) + '")'; node.style.backgroundSize = '100% 100%'; }
     return;
   }
@@ -1148,17 +1148,17 @@ function closeZoom() {
 function buildZoomPicker() {
   const wrap = el('div', 'zoom-picker');
   if (state.zoomMode === 'solid') {
-    const lv = curLevel();
+    const lv = curLevel(); const idx = state.zoomCell;
     wrap.appendChild(el('div', 'picker-head', 'Walls (structure) — carve the room shape'));
     const info = el('div', 'zoom-solid-info');
     info.appendChild(el('p', null, 'Click or drag across the grid to toggle sub-tiles between OPEN floor and SOLID wall. Carve away the corners/edges you don’t want and the cell becomes a non-square room.'));
-    info.appendChild(el('p', null, 'New walls take the wall texture selected below — leave it on Inherit and they use this floor’s default wall texture. Painting over an existing solid tile re-textures it; Erasing restores floor.'));
+    info.appendChild(el('p', null, 'New walls take the wall texture selected below — leave it on Inherit and they use this room’s default wall texture (set under “Room Defaults” above). Painting over an existing solid tile re-textures it; Erasing restores floor.'));
     wrap.appendChild(info);
-    const eff = levelWallTex(lv);
+    const eff = cellWallTex(lv, idx);
     wrap.appendChild(el('div', 'picker-head', 'Wall texture for new walls'));
     const grid = el('div', 'tex-grid');
     const inh = el('div', 'tex-swatch tex-none' + (state.zoomSolidTex === -1 ? ' sel' : ''), 'Inherit');
-    inh.title = 'Use this floor’s default wall texture (' + (eff >= 0 ? '#' + eff : 'engine default') + ')';
+    inh.title = 'Use this room’s default wall texture (' + (eff >= 0 ? '#' + eff : 'engine default') + ')';
     inh.onclick = () => { state.zoomSolidTex = -1; state.zoomErase = false; render(); };
     grid.appendChild(inh);
     for (let i = 0; i < WALL_TEX_COUNT; i++) {
@@ -1191,6 +1191,33 @@ function buildZoomPicker() {
   }
   wrap.appendChild(grid); return wrap;
 }
+// ---- Room (single-cell) defaults, shown inside the zoom modal ---------------
+// A room = one map cell = the 11×11 sub-grid you are zoomed into. Setting a room
+// default writes the per-cell wallTex/floorTex (−1 = inherit this floor’s default),
+// clears every per-sub-tile override in the cell, and resets carved structural walls
+// to inherit — so the whole room repaints to the chosen texture. The engine resolves
+// dungeon → floor → room → per-tile at load, so new walls also pick up the room default.
+function buildRoomDefaults(lv, idx, p) {
+  const sec = el('div', 'defaults-section zoom-room-defaults');
+  sec.appendChild(el('h2', null, 'Room Defaults — Cell (' + p.x + ', ' + p.y + ')'));
+  sec.appendChild(el('div', 'muted', 'One wall / floor texture for this whole room. Applying repaints every wall and floor in this cell and clears any individual sub-tile textures painted here. Leave on Inherit to use this floor’s default.'));
+  const wallCur = lv.wallTex[idx] >= 0 ? lv.wallTex[idx] : -1;
+  sec.appendChild(defTexRow('Wall texture', 'wall', wallCur, cellWallTex(lv, idx), v => {
+    lv.wallTex[idx] = v;                                        // −1 = inherit floor default, else texture n
+    delete lv.subWall[idx];                                     // drop hand-painted wall faces in this room
+    if (lv.subSolidTex[idx]) lv.subSolidTex[idx].fill(-1);      // carved structural walls re-inherit
+    setStatus('Room (' + p.x + ',' + p.y + ') wall texture ' + (v >= 0 ? 'set to #' + v : 'reset to inherit this floor’s default') + '; every wall in the room updated.');
+    render();
+  }, { allowNone: true, noneLabel: 'Inherit', noneTitle: 'Inherit this floor’s default wall texture', title: 'Room wall texture (whole cell)' }));
+  const floorCur = lv.floorTex[idx] >= 0 ? lv.floorTex[idx] : -1;
+  sec.appendChild(defTexRow('Floor texture', 'floor', floorCur, cellFloorTex(lv, idx), v => {
+    lv.floorTex[idx] = v;
+    delete lv.subFloor[idx];                                    // drop hand-painted floor tiles in this room
+    setStatus('Room (' + p.x + ',' + p.y + ') floor texture ' + (v >= 0 ? 'set to #' + v : 'reset to inherit this floor’s default') + '; every floor in the room updated.');
+    render();
+  }, { allowNone: true, noneLabel: 'Inherit', noneTitle: 'Inherit this floor’s default floor texture', title: 'Room floor texture (whole cell)' }));
+  return sec;
+}
 function buildZoomOverlay() {
   const lv = curLevel(); const idx = state.zoomCell; const p = xy(lv, idx);
   state._zoomEdges = solidEdges(lv, idx); subCellNodes = [];
@@ -1213,6 +1240,7 @@ function buildZoomOverlay() {
   ctl.appendChild(hIn);
   ctl.appendChild(el('span', 'zoom-ctl-note', '4–16 (' + parentHeight(lv) + ' = this floor’s default; ceiling drops to match)'));
   modal.appendChild(ctl);
+  modal.appendChild(buildRoomDefaults(lv, idx, p));
   const modes = el('div', 'zoom-modes');
   [['floor', 'Floor sub-textures'], ['wall', 'Wall sub-textures'], ['solid', 'Walls (structure)']].forEach(([m, lbl]) => {
     modes.appendChild(button(lbl, 'tab' + (state.zoomMode === m ? ' active' : ''), () => { state.zoomMode = m; render(); }));

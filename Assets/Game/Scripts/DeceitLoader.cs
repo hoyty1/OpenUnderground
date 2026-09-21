@@ -411,10 +411,17 @@ public static class DeceitLoader
                     int uxBase = cx * TilesPerCell;
                     int uyBase = (ch - 1 - cy) * TilesPerCell;
 
-                    int nMat = WallTexOfCell(sc, cx, cy - 1, cw, ch, lvlDefWall); // north neighbour
-                    int sMat = WallTexOfCell(sc, cx, cy + 1, cw, ch, lvlDefWall); // south neighbour
-                    int wMat = WallTexOfCell(sc, cx - 1, cy, cw, ch, lvlDefWall); // west neighbour
-                    int eMat = WallTexOfCell(sc, cx + 1, cy, cw, ch, lvlDefWall); // east neighbour
+                    // Room-level default wall texture: a per-cell wallTex on this FLOOR cell is
+                    // the "whole room" wall texture (set in the zoom editor). It becomes the
+                    // fallback for any untextured solid neighbour, so setting it repaints every
+                    // wall the room renders. Inherits the floor/dungeon default when -1.
+                    int cellDefWall = (haveWallTex && sc.wallTex[cy * cw + cx] >= 0)
+                        ? sc.wallTex[cy * cw + cx] : lvlDefWall;
+
+                    int nMat = WallTexOfCell(sc, cx, cy - 1, cw, ch, cellDefWall); // north neighbour
+                    int sMat = WallTexOfCell(sc, cx, cy + 1, cw, ch, cellDefWall); // south neighbour
+                    int wMat = WallTexOfCell(sc, cx - 1, cy, cw, ch, cellDefWall); // west neighbour
+                    int eMat = WallTexOfCell(sc, cx + 1, cy, cw, ch, cellDefWall); // east neighbour
 
                     // North neighbour -> top row of block (dy = TPC-1); South -> bottom (dy = 0).
                     if (nMat >= 0)
@@ -465,6 +472,10 @@ public static class DeceitLoader
                 if (sc.cells[scy * cw + scx] != 1) continue; // only floor cells carve walls
                 int uxBase = scx * TilesPerCell;
                 int uyBase = (ch - 1 - scy) * TilesPerCell;
+                // Structural walls inherit this room's default wall texture (per-cell wallTex on
+                // the FLOOR cell) when the carved tile has no explicit solidTex; that in turn
+                // inherits the floor/dungeon default.
+                int cellDefWall = (haveWallTex && sc.wallTex[st.cell] >= 0) ? sc.wallTex[st.cell] : lvlDefWall;
                 for (int dy = 0; dy < TilesPerCell; dy++)
                 {
                     for (int dx = 0; dx < TilesPerCell; dx++)
@@ -472,7 +483,7 @@ public static class DeceitLoader
                         int subIdx = (TilesPerCell - 1 - dy) * TilesPerCell + dx;
                         if (subIdx >= st.solid.Length || st.solid[subIdx] != 1) continue;
                         int tex = (st.solidTex != null && subIdx < st.solidTex.Length && st.solidTex[subIdx] >= 0)
-                            ? st.solidTex[subIdx] : lvlDefWall;
+                            ? st.solidTex[subIdx] : cellDefWall;
                         if (tex < 0) continue;               // inherits engine default wall (slot 0)
                         int slot = wallSlotFor(tex);
                         int ex = uxBase + dx, ey = uyBase + dy; // the void (solid) tile
