@@ -282,4 +282,7 @@ body {
 }
 .def-cur { flex: 1; font-size: 11px; color: #9a9a9a; }
 .btn-xs { padding: 3px 9px; font-size: 11px; }
+.def-apply-row { margin: 10px 0 4px; padding-top: 10px; border-top: 1px solid #333; }
+.btn-apply { background: #3a2f12; border: 1px solid #6d5a1f; color: #e6cf7a; white-space: nowrap; }
+.btn-apply:hover { background: #4a3c17; border-color: #d9b64e; color: #f3e2a0; }
 .tex-picker-modal { max-height: 80vh; overflow-y: auto; max-width: 560px; }

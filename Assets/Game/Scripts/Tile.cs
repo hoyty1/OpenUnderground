@@ -14,6 +14,10 @@ public class Tile
    public int floorTexture;
    public int doorFrob;
    public int wallTexture;
+   // Object-on-wall background: when >= 0, wallTexture is an "object" texture (e.g. a gate)
+   // that must render ONCE at the bottom 4-unit segment without tiling upward, and objWallBg
+   // is the wall-submesh slot used to fill the remaining wall height. -1 = normal tiled wall.
+   public int objWallBg = -1;
    public int firstObject;
    public int x;
    public int y;

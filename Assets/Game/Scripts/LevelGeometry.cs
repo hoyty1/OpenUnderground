@@ -307,6 +307,27 @@ public class LevelGeometry : LevelObject
             ceilingOnlyTris.Add(si + 2);
         }
 
+        // Emit one vertical wall quad spanning botL..topL (left) / botR..topR (right) heights,
+        // into the given submesh. UVs use the same V(height) = 1 - texScale*(16-height) mapping
+        // as the main wall loop, so segments stacked with this helper tile seamlessly.
+        void EmitWallQuad(List<int> subMeshTris, Vector3 vLeft, Vector3 vRight,
+                          float botL, float botR, float topL, float topR)
+        {
+            int wvi = verts.Count;
+            Vector3 wv0 = vLeft, wv1 = vRight, wv2 = vLeft, wv3 = vRight;
+            wv0.y = LevelLoader.yScale * topL;
+            wv1.y = LevelLoader.yScale * topR;
+            wv2.y = LevelLoader.yScale * botL;
+            wv3.y = LevelLoader.yScale * botR;
+            verts.Add(wv0); verts.Add(wv1); verts.Add(wv2); verts.Add(wv3);
+            uvs.Add(new Vector2(1, 1.0f - LevelLoader.texScale * (16 - topL)));
+            uvs.Add(new Vector2(0, 1.0f - LevelLoader.texScale * (16 - topR)));
+            uvs.Add(new Vector2(1, 1.0f - LevelLoader.texScale * (16 - botL)));
+            uvs.Add(new Vector2(0, 1.0f - LevelLoader.texScale * (16 - botR)));
+            subMeshTris.Add(wvi);     subMeshTris.Add(wvi + 2); subMeshTris.Add(wvi + 1);
+            subMeshTris.Add(wvi + 1); subMeshTris.Add(wvi + 2); subMeshTris.Add(wvi + 3);
+        }
+
         for (int y = 0; y < level.Height; ++y)
         {
             for (int x = 0; x < level.Width; ++x)
@@ -619,21 +640,37 @@ public class LevelGeometry : LevelObject
                                 {
                                     ++wallTexture;
                                 }
-                                subMeshTris = tris[wallTexture];
-                                verts.Add(wv0);
-                                verts.Add(wv1);
-                                verts.Add(wv2);
-                                verts.Add(wv3);
-                                uvs.Add(uvw0);
-                                uvs.Add(uvw1);
-                                uvs.Add(uvw2);
-                                uvs.Add(uvw3);
-                                subMeshTris.Add(vi);
-                                subMeshTris.Add(vi + 2);
-                                subMeshTris.Add(vi + 1);
-                                subMeshTris.Add(vi + 1);
-                                subMeshTris.Add(vi + 2);
-                                subMeshTris.Add(vi + 3);
+                                if (t.objWallBg >= 0)
+                                {
+                                    // Object-on-wall (gate, grate, lever, ...): draw the object
+                                    // texture ONCE across the bottom 4-unit segment, then fill the
+                                    // remaining wall height with the background wall texture so the
+                                    // object never tiles up the wall. Object walls never carry decals,
+                                    // so this uses the raw floor (h) and clamped ceiling (topL/topR).
+                                    float segTopL = Mathf.Min(h[f.lt] + 4, topL);
+                                    float segTopR = Mathf.Min(h[f.rt] + 4, topR);
+                                    EmitWallQuad(tris[wallTexture], v[f.lt], v[f.rt], h[f.lt], h[f.rt], segTopL, segTopR);
+                                    if (topL > segTopL || topR > segTopR)
+                                        EmitWallQuad(tris[t.objWallBg], v[f.lt], v[f.rt], segTopL, segTopR, topL, topR);
+                                }
+                                else
+                                {
+                                    subMeshTris = tris[wallTexture];
+                                    verts.Add(wv0);
+                                    verts.Add(wv1);
+                                    verts.Add(wv2);
+                                    verts.Add(wv3);
+                                    uvs.Add(uvw0);
+                                    uvs.Add(uvw1);
+                                    uvs.Add(uvw2);
+                                    uvs.Add(uvw3);
+                                    subMeshTris.Add(vi);
+                                    subMeshTris.Add(vi + 2);
+                                    subMeshTris.Add(vi + 1);
+                                    subMeshTris.Add(vi + 1);
+                                    subMeshTris.Add(vi + 2);
+                                    subMeshTris.Add(vi + 3);
+                                }
                             }
                         }
                     }

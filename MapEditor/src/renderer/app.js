@@ -845,6 +845,41 @@ function defTexRow(labelText, kind, cur, eff, onPick, opts) {
   row.appendChild(button('Change', 'btn btn-xs', () => openTexPicker(kind, cur, onPick, opts)));
   return row;
 }
+// ---- Apply-defaults actions ------------------------------------------------
+// "Apply" flattens the texture overrides *inside* a scope so everything there falls
+// back to that scope's default. The dungeon->floor->room->sub-tile cascade then shows
+// the default texture across the whole scope. Heights are never touched.
+function applyRow(label, help, onClick) {
+  const row = el('div', 'def-row def-apply-row');
+  row.appendChild(button(label, 'btn btn-sm btn-apply', onClick));
+  row.appendChild(el('div', 'def-cur muted', help));
+  return row;
+}
+function applyDungeonDefaults() {
+  if (!confirm('Apply the dungeon default wall & floor textures to EVERY floor and room in the dungeon?\n\nThis clears all per-floor and per-room texture overrides so everything shows the dungeon default. Heights are kept. (Undo reverts this.)')) return;
+  state.levels.forEach(lv => {
+    lv.defaultWallTex = -2; lv.defaultFloorTex = -2;                      // floors re-inherit dungeon default
+    lv.wallTex.fill(-1); lv.floorTex.fill(-1);                           // rooms re-inherit
+    lv.subWall = {}; lv.subFloor = {};                                   // drop hand-painted sub-tile textures
+    Object.keys(lv.subSolidTex).forEach(k => lv.subSolidTex[k].fill(-1));// carved structural walls re-inherit
+  });
+  setStatus('Applied the dungeon default textures to every floor and room; all per-floor and per-room overrides cleared.');
+  render();
+}
+function applyFloorDefaults(lv) {
+  if (!confirm('Apply this floor\u2019s default wall & floor textures to every room on Level ' + (state.level + 1) + '?\n\nThis clears all per-room texture overrides on this floor so every room shows this floor\u2019s default. Heights are kept. (Undo reverts this.)')) return;
+  lv.wallTex.fill(-1); lv.floorTex.fill(-1);
+  lv.subWall = {}; lv.subFloor = {};
+  Object.keys(lv.subSolidTex).forEach(k => lv.subSolidTex[k].fill(-1));
+  setStatus('Applied Level ' + (state.level + 1) + '\u2019s default textures to every room on this floor; per-room overrides cleared.');
+  render();
+}
+function applyRoomDefaults(lv, idx, p) {
+  delete lv.subWall[idx]; delete lv.subFloor[idx];                       // drop hand-painted sub-tile textures
+  if (lv.subSolidTex[idx]) lv.subSolidTex[idx].fill(-1);                 // carved structural walls re-inherit
+  setStatus('Applied the room default textures to every sub-tile in cell (' + p.x + ',' + p.y + '); individual sub-tile textures cleared.');
+  render();
+}
 function buildDefaultsSection(lv) {
   const sec = el('div', 'defaults-section');
   // ---- Dungeon-wide defaults
@@ -859,6 +894,7 @@ function buildDefaultsSection(lv) {
   sec.appendChild(hrow);
   sec.appendChild(defTexRow('Wall texture', 'wall', state.mapDefaults.wallTex, state.mapDefaults.wallTex, v => { state.mapDefaults.wallTex = v; render(); }, { allowNone: true, title: 'Dungeon default wall texture' }));
   sec.appendChild(defTexRow('Floor texture', 'floor', state.mapDefaults.floorTex, state.mapDefaults.floorTex, v => { state.mapDefaults.floorTex = v; render(); }, { allowNone: true, title: 'Dungeon default floor texture' }));
+  sec.appendChild(applyRow('Apply to entire dungeon', 'Reset every floor and room to these dungeon defaults (clears all per-floor & per-room texture overrides).', applyDungeonDefaults));
   // ---- Per-floor defaults (override the dungeon default for the current level)
   sec.appendChild(el('h2', null, 'Floor Defaults — Level ' + (state.level + 1)));
   sec.appendChild(el('div', 'muted', 'Override the dungeon defaults for this floor. Leave on Inherit / blank to use the dungeon default.'));
@@ -873,6 +909,7 @@ function buildDefaultsSection(lv) {
   sec.appendChild(fhrow);
   sec.appendChild(defTexRow('Wall texture', 'wall', lv.defaultWallTex, levelWallTex(lv), v => { lv.defaultWallTex = v; render(); }, { allowInherit: true, allowNone: true, title: 'Floor default wall texture' }));
   sec.appendChild(defTexRow('Floor texture', 'floor', lv.defaultFloorTex, levelFloorTex(lv), v => { lv.defaultFloorTex = v; render(); }, { allowInherit: true, allowNone: true, title: 'Floor default floor texture' }));
+  sec.appendChild(applyRow('Apply to all rooms on this floor', 'Reset every room on this floor to the floor defaults above (clears per-room texture overrides on this floor).', () => applyFloorDefaults(lv)));
   return sec;
 }
 
@@ -1279,6 +1316,7 @@ function buildRoomDefaults(lv, idx, p) {
     setStatus('Room (' + p.x + ',' + p.y + ') floor texture ' + (v >= 0 ? 'set to #' + v : 'reset to inherit this floor’s default') + '; every floor in the room updated.');
     render();
   }, { allowNone: true, noneLabel: 'Inherit', noneTitle: 'Inherit this floor’s default floor texture', title: 'Room floor texture (whole cell)' }));
+  sec.appendChild(applyRow('Apply to this room', 'Repaint every sub-tile in this room to the room textures above (clears individually painted sub-tile textures).', () => applyRoomDefaults(lv, idx, p)));
   return sec;
 }
 function buildZoomOverlay() {

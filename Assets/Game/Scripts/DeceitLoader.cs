@@ -108,6 +108,18 @@ public static class DeceitLoader
     public const int MaxWallSlots    = 48;  // wall submesh slots 0..47 (slot 0 = default)
     public const int FirstFloorSlot  = 2;   // floor slots 2..8 hold explicit floor textures
     public const int LastFloorSlot   = 8;   // (slots 0/1 = checkerboard, slot 9 = ceiling)
+    // Stairway wall textures: the cell holding an ascend/descend trigger gets its wall faces
+    // skinned with the matching original stairway texture so the way up/down is visible.
+    public const int StairUpWallMat   = 139; // wallMat index shown on an "up" stair cell
+    public const int StairDownWallMat = 137; // wallMat index shown on a "down" stair cell
+    // "Object" wall textures: wallMat indices that draw a fixture (gate, grate, lever, etc.)
+    // baked into the texture. These must render ONCE across the bottom 4-unit segment of a wall
+    // (never tiled up its full height); the rest of the wall height is filled with the surface's
+    // ordinary (background) wall texture. Seeded with the two portcullis gates the design calls
+    // out (38 & 39); extend this set as more object textures are identified.
+    public static readonly System.Collections.Generic.HashSet<int> ObjectWallMats =
+        new System.Collections.Generic.HashSet<int> { 38, 39 };
+    public static bool IsObjectWallMat(int wallMat) { return wallMat >= 0 && ObjectWallMats.Contains(wallMat); }
 
     private static DeceitMap sMap;
     private static bool sMapLoaded;
@@ -509,6 +521,12 @@ public static class DeceitLoader
                 if (sc.cells[scy * cw + scx] != 1) continue; // only floor cells draw walls
                 int uxBase = scx * TilesPerCell;
                 int uyBase = (ch - 1 - scy) * TilesPerCell;
+                // Background wall texture for any object texture painted in this room: the room's
+                // effective default wall (per-cell wallTex, else floor/dungeon default). Resolved
+                // to a submesh slot (< 0 default -> slot 0) and used to fill the wall above the
+                // bottom object segment.
+                int cellDefWall = (haveWallTex && sc.wallTex[st.cell] >= 0) ? sc.wallTex[st.cell] : lvlDefWall;
+                int bgSlot = cellDefWall >= 0 ? wallSlotFor(cellDefWall) : 0;
                 for (int dy = 0; dy < TilesPerCell; dy++)
                 {
                     for (int dx = 0; dx < TilesPerCell; dx++)
@@ -517,8 +535,44 @@ public static class DeceitLoader
                         if (subIdx >= st.wall.Length) continue;
                         int mat = st.wall[subIdx];
                         if (mat >= 0)
-                            level.tiles[uxBase + dx, uyBase + dy].wallTexture = wallSlotFor(mat);
+                        {
+                            Tile wt = level.tiles[uxBase + dx, uyBase + dy];
+                            wt.wallTexture = wallSlotFor(mat);
+                            // Object textures (gates etc.) render once at the bottom over the
+                            // background slot; ordinary textures tile normally (objWallBg = -1).
+                            wt.objWallBg = IsObjectWallMat(mat) ? bgSlot : -1;
+                        }
                     }
+                }
+            }
+        }
+
+        // ---- Stair-cell wall textures: the floor cell holding an up/down trigger shows the
+        // matching stairway texture on every wall face it renders (139 up, 137 down). Runs last
+        // so the stairway wins over neighbour-cell, structural and hand-painted wall textures.
+        // The stair cell must sit against a solid neighbour for a wall face to exist there. ----
+        if (sc.stairs != null)
+        {
+            foreach (DeceitStair stair in sc.stairs)
+            {
+                if (stair == null) continue;
+                int mat = stair.kind == "up" ? StairUpWallMat : (stair.kind == "down" ? StairDownWallMat : -1);
+                if (mat < 0) continue;                                   // "exit" stairs get no stairway wall
+                int scx = stair.x, scy = stair.y;                        // editor cell coords (row 0 = north)
+                if (scx < 0 || scx >= cw || scy < 0 || scy >= ch) continue;
+                if (sc.cells[scy * cw + scx] != 1) continue;             // only floor cells render walls
+                int slot = wallSlotFor(mat);
+                int uxBase = scx * TilesPerCell;
+                int uyBase = (ch - 1 - scy) * TilesPerCell;
+                for (int dx = 0; dx < TilesPerCell; dx++)
+                {
+                    Tile tn = level.tiles[uxBase + dx, uyBase + TilesPerCell - 1]; tn.wallTexture = slot; tn.objWallBg = -1; // north edge
+                    Tile ts = level.tiles[uxBase + dx, uyBase];                     ts.wallTexture = slot; ts.objWallBg = -1; // south edge
+                }
+                for (int dy = 0; dy < TilesPerCell; dy++)
+                {
+                    Tile tw = level.tiles[uxBase, uyBase + dy];                     tw.wallTexture = slot; tw.objWallBg = -1; // west edge
+                    Tile te = level.tiles[uxBase + TilesPerCell - 1, uyBase + dy];   te.wallTexture = slot; te.objWallBg = -1; // east edge
                 }
             }
         }

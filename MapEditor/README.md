@@ -9,7 +9,7 @@ step**, so it runs fully offline.
 
 ## Quick Start (Windows)
 
-1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.12.0.zip`
+1. Download `MapEditor/dist/DeceitMapEditor-Windows-x64-v1.13.0.zip`
 2. Extract the ZIP
 3. Run `Deceit Map Editor.exe`
 
@@ -72,6 +72,24 @@ only where you want that wall to differ. The cascade is stored losslessly in the
 inherited value is written as 0/-1, and a room default reuses the per-cell wallTex/floorTex
 arrays), so re-editing a saved map keeps every default intact and older maps load unchanged.
 
+### Apply defaults (flatten overrides)
+
+Each defaults panel has an **Apply** button that pushes that scope's default *down* into
+everything below it, clearing the finer overrides so the whole scope inherits cleanly:
+
+- **Apply to entire dungeon** (Dungeon Defaults panel) — resets every floor and every room on
+  every level back to the dungeon defaults: it clears all per-floor defaults, all per-cell wall/
+  floor textures, and all sub-tile wall/floor painting across the whole dungeon. Prompts first.
+- **Apply to all rooms on this floor** (Floor Defaults panel) — clears every per-cell and
+  sub-tile texture override on the current level, so every room falls back to this floor's
+  defaults (the floor default itself is kept). Prompts first.
+- **Apply to this room** (Room Defaults panel in the zoom modal) — repaints every sub-tile in the
+  cell to the room's wall/floor defaults, clearing any individually painted sub-tile textures
+  (the room default itself is kept).
+
+Apply only flattens texture overrides; it never changes heights, structural walls, objects,
+fountains or stairs. Every Apply is a single undo step.
+
 ## Sub-tile detail & height
 
 Each map cell is rendered in-game as an **11×11 grid of engine tiles**. The **Detail / Zoom**
@@ -88,6 +106,12 @@ tool exposes that grid so you can go finer than a whole cell:
 - **Wall sub-textures** — paint individual wall faces. Edge tiles that face a solid neighbour
   (highlighted with a blue outline) render their wall in-game and override the cell-level Wall
   Texture; interior tiles only render if that side later becomes a wall.
+- **Object textures on walls** — some wall textures are objects mounted *on* a wall rather than a
+  repeating surface (for example the two gates, textures **38** and **39**). When you paint one of
+  these as a wall sub-texture, the engine draws the object **once** across the bottom 4-unit
+  segment of the wall and fills the rest of the wall's height with the room's default wall texture
+  as a background, so the object never tiles upward. Paint them exactly like any other wall
+  sub-texture; the once-at-the-bottom behaviour is automatic for the recognised object textures.
 - **Walls (structure)** — carve the cell into non-square rooms. Paint sub-tiles **solid** (shown
   as brown brick) to turn them into full-height interior wall/void, or paint them back **open**.
   A solid sub-tile becomes an engine tile of type 0: it renders no floor, the open tiles around
@@ -110,6 +134,17 @@ textures (see below), so painting many distinct textures across sub-tiles can hi
 clears its sub-tile detail and height. Cells carrying sub-tile detail or a custom height show a
 small blue dot in the top-right corner on the main grid. Press **Esc** or click outside the modal
 to close it.
+
+## Stair-cell wall textures
+
+The floor cell that holds a staircase **trigger** is skinned in-game with the matching stairway
+wall texture on every wall face it renders: **wall texture 139 for an Up staircase** and **wall
+texture 137 for a Down staircase** (Exit staircases get no special texture). This is applied
+automatically at load — you only place the staircase and choose Up/Down/Exit as usual. For the
+stairway to be visible the stair cell must sit against a solid neighbour so a wall face actually
+exists there; a stair cell with open floor on all sides has no wall to paint. The stairway
+texture is applied last, so it wins over neighbour-cell, structural and hand-painted wall
+textures on that cell.
 
 ## Loading & saving
 
